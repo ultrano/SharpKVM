@@ -405,6 +405,7 @@ namespace SharpKVM
             InitializeUI();
             LoadConfig();
             LoadClientConfigs(); 
+            _cmbLayoutMode.SelectedIndex = _layoutMode == LayoutMode.Free ? 1 : 0;
             
             this.Opened += (s, e) => UpdateScreenCache();
             this.Closing += (s, e) => { StopServer(); StopClient(); CursorManager.Show(); CursorManager.Unlock(); SaveConfig(); };
@@ -441,6 +442,7 @@ namespace SharpKVM
             _cmbLayoutMode.SelectionChanged += (s, e) =>
             {
                 _layoutMode = (_cmbLayoutMode.SelectedIndex == 1) ? LayoutMode.Free : LayoutMode.Snap;
+                ApplyLayoutModeToPlacedClients();
                 SaveClientConfigs();
             };
             
@@ -509,6 +511,7 @@ namespace SharpKVM
                 string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CLIENT_CONFIG_FILENAME);
                 if (File.Exists(path)) {
                     var lines = File.ReadAllLines(path);
+                    bool loadedMode = false;
                     foreach(var line in lines) {
                         var parts = line.Split('|');
                         if (parts.Length >= 11) {
@@ -527,6 +530,11 @@ namespace SharpKVM
                             };
                             
                             _clientConfigs[config.IP] = config;
+                            if (!loadedMode)
+                            {
+                                _layoutMode = config.LayoutMode;
+                                loadedMode = true;
+                            }
                         }
                     }
                 }
@@ -870,7 +878,7 @@ namespace SharpKVM
                 _snapSlots.Add(new SnapSlot(s.ID + "_Bottom", new Rect(x, y + h, w, 20), s.ID, "Bottom"));
             }
 
-            RedrawClientBoxes();
+            ApplyLayoutModeToPlacedClients();
         }
 
         private void RedrawClientBoxes()
@@ -936,6 +944,156 @@ namespace SharpKVM
         private ClientHandler? GetClientByKey(string key)
         {
             return _connectedClients.FirstOrDefault(c => GetClientKey(c) == key);
+        }
+
+        private Size GetNaturalStageSize(ClientHandler client)
+        {
+            double w = Math.Max(40, client.Width * _layoutScale);
+            double h = Math.Max(25, client.Height * _layoutScale);
+            return new Size(w, h);
+        }
+
+        private Rect ClampRectToStage(Rect rect)
+        {
+            double maxX = Math.Max(0, _pnlStage.Bounds.Width - rect.Width);
+            double maxY = Math.Max(0, _pnlStage.Bounds.Height - rect.Height);
+            double x = Math.Clamp(rect.X, 0, maxX);
+            double y = Math.Clamp(rect.Y, 0, maxY);
+            return new Rect(x, y, rect.Width, rect.Height);
+        }
+
+        private Rect ApplyMagneticSnap(Rect rect, string movingClientKey, double threshold = 14)
+        {
+            var targets = new List<Rect>();
+            targets.AddRange(_cachedScreens.Select(s => s.UIBounds));
+            foreach (var kv in _clientLayouts)
+            {
+                if (kv.Key == movingClientKey || !kv.Value.IsPlaced) continue;
+                targets.Add(kv.Value.StageRect);
+            }
+
+            double x = rect.X;
+            double y = rect.Y;
+            double bestDx = threshold + 1;
+            double bestDy = threshold + 1;
+
+            foreach (var t in targets)
+            {
+                var xCandidates = new[]
+                {
+                    t.Left,
+                    t.Right - rect.Width,
+                    t.Left - rect.Width,
+                    t.Right
+                };
+
+                foreach (var cx in xCandidates)
+                {
+                    double dx = Math.Abs(cx - x);
+                    if (dx < bestDx && dx <= threshold)
+                    {
+                        bestDx = dx;
+                        x = cx;
+                    }
+                }
+
+                var yCandidates = new[]
+                {
+                    t.Top,
+                    t.Bottom - rect.Height,
+                    t.Top - rect.Height,
+                    t.Bottom
+                };
+
+                foreach (var cy in yCandidates)
+                {
+                    double dy = Math.Abs(cy - y);
+                    if (dy < bestDy && dy <= threshold)
+                    {
+                        bestDy = dy;
+                        y = cy;
+                    }
+                }
+            }
+
+            return ClampRectToStage(new Rect(x, y, rect.Width, rect.Height));
+        }
+
+        private Rect GetSnapRect(SnapSlot slot, double ratio)
+        {
+            double newW = slot.Rect.Width;
+            double newH = slot.Rect.Height;
+            if (slot.Direction.EndsWith("Left") || slot.Direction.EndsWith("Right"))
+            {
+                newH = slot.Rect.Height;
+                newW = newH * ratio;
+            }
+            else
+            {
+                newW = slot.Rect.Width;
+                newH = newW / ratio;
+            }
+
+            double finalX = slot.Rect.X;
+            double finalY = slot.Rect.Y;
+            if (slot.Direction.EndsWith("Left")) finalX = slot.Rect.X + slot.Rect.Width - newW;
+            else if (slot.Direction.EndsWith("Right")) finalX = slot.Rect.X;
+            else if (slot.Direction.EndsWith("Top")) finalY = slot.Rect.Y + slot.Rect.Height - newH;
+            else if (slot.Direction.EndsWith("Bottom")) finalY = slot.Rect.Y;
+
+            return new Rect(finalX, finalY, newW, newH);
+        }
+
+        private void ApplyLayoutModeToPlacedClients()
+        {
+            foreach (var client in _connectedClients)
+            {
+                string key = GetClientKey(client);
+                if (!_clientLayouts.TryGetValue(key, out var layout) || !layout.IsPlaced) continue;
+
+                if (_layoutMode == LayoutMode.Free)
+                {
+                    var natural = GetNaturalStageSize(client);
+                    var current = layout.StageRect;
+                    var centered = new Rect(
+                        current.Center.X - (natural.Width / 2),
+                        current.Center.Y - (natural.Height / 2),
+                        natural.Width,
+                        natural.Height
+                    );
+                    layout.StageRect = ClampRectToStage(centered);
+                    layout.IsSnapped = false;
+                    layout.SnapAnchorID = "";
+                }
+                else
+                {
+                    SnapSlot? slot = null;
+                    if (!string.IsNullOrEmpty(layout.SnapAnchorID))
+                    {
+                        slot = _snapSlots.FirstOrDefault(s => s.ID == layout.SnapAnchorID);
+                    }
+
+                    if (slot == null)
+                    {
+                        Point center = layout.StageRect.Center;
+                        slot = _snapSlots
+                            .Select(s => new { Slot = s, Dist = GetDistanceToRect(center, s.Rect) })
+                            .OrderBy(x => x.Dist)
+                            .FirstOrDefault()?.Slot;
+                    }
+
+                    if (slot != null)
+                    {
+                        layout.StageRect = GetSnapRect(slot, (double)client.Width / client.Height);
+                        layout.IsSnapped = true;
+                        layout.SnapAnchorID = slot.ID;
+                    }
+                }
+
+                _clientLayouts[key] = layout;
+            }
+
+            RedrawClientBoxes();
         }
 
         private double GetDistanceToRect(Point pt, Rect rect) {
@@ -1005,8 +1163,23 @@ namespace SharpKVM
             bool isDragging = false; Point start = new Point();
             box.PointerPressed += (s, e) => { 
                 if(!e.GetCurrentPoint(box).Properties.IsRightButtonPressed) {
-                    isDragging = true; start = e.GetPosition(box); 
-                    if(box.Parent is StackPanel) { _pnlDock.Children.Remove(box); _pnlStage.Children.Add(box); } 
+                    isDragging = true;
+                    start = e.GetPosition(box);
+                    if(box.Parent is StackPanel) {
+                        _pnlDock.Children.Remove(box);
+                        _pnlStage.Children.Add(box);
+
+                        if (_layoutMode == LayoutMode.Free)
+                        {
+                            var natural = GetNaturalStageSize(client);
+                            box.Width = natural.Width;
+                            box.Height = natural.Height;
+                        }
+
+                        var stagePos = e.GetPosition(_pnlStage);
+                        Canvas.SetLeft(box, stagePos.X - start.X);
+                        Canvas.SetTop(box, stagePos.Y - start.Y);
+                    } 
                     e.Pointer.Capture(box); 
                 }
             };
@@ -1018,25 +1191,17 @@ namespace SharpKVM
                     var bestMatch = _snapSlots.Select(slot => new { Slot = slot, Dist = GetDistanceToRect(boxCenter, slot.Rect) }).Where(x => x.Dist < 100).OrderBy(x => x.Dist).FirstOrDefault();
                     if(_layoutMode == LayoutMode.Snap && bestMatch != null) {
                         var slot = bestMatch.Slot;
-                        
-                        double newW = box.Width, newH = box.Height;
-                        if (slot.Direction.EndsWith("Left") || slot.Direction.EndsWith("Right")) { newH = slot.Rect.Height; newW = newH * ratio; }
-                        else { newW = slot.Rect.Width; newH = newW / ratio; }
-                        box.Width = newW; box.Height = newH;
-                        
-                        double finalX = slot.Rect.X, finalY = slot.Rect.Y;
-                        if (slot.Direction.EndsWith("Left")) finalX = slot.Rect.X + slot.Rect.Width - newW; 
-                        else if (slot.Direction.EndsWith("Right")) finalX = slot.Rect.X;
-                        else if (slot.Direction.EndsWith("Top")) finalY = slot.Rect.Y + slot.Rect.Height - newH;
-                        else if (slot.Direction.EndsWith("Bottom")) finalY = slot.Rect.Y;
-                        
-                        Canvas.SetLeft(box, finalX); Canvas.SetTop(box, finalY);
+                        var snappedRect = GetSnapRect(slot, ratio);
+                        box.Width = snappedRect.Width;
+                        box.Height = snappedRect.Height;
+                        Canvas.SetLeft(box, snappedRect.X);
+                        Canvas.SetTop(box, snappedRect.Y);
                         box.Background = Brushes.Green;
 
                         _clientLayouts[clientKey] = new ClientLayout
                         {
                             ClientKey = clientKey,
-                            StageRect = new Rect(finalX, finalY, newW, newH),
+                            StageRect = snappedRect,
                             IsPlaced = true,
                             IsSnapped = true,
                             SnapAnchorID = slot.ID
@@ -1051,16 +1216,18 @@ namespace SharpKVM
                             if (double.IsNaN(left)) left = 0;
                             if (double.IsNaN(top)) top = 0;
 
-                            left = Math.Clamp(left, 0, Math.Max(0, _pnlStage.Bounds.Width - box.Width));
-                            top = Math.Clamp(top, 0, Math.Max(0, _pnlStage.Bounds.Height - box.Height));
-                            Canvas.SetLeft(box, left);
-                            Canvas.SetTop(box, top);
+                            var freeRect = ClampRectToStage(new Rect(left, top, box.Width, box.Height));
+                            freeRect = ApplyMagneticSnap(freeRect, clientKey);
+                            Canvas.SetLeft(box, freeRect.X);
+                            Canvas.SetTop(box, freeRect.Y);
+                            box.Width = freeRect.Width;
+                            box.Height = freeRect.Height;
                             box.Background = Brushes.Green;
 
                             _clientLayouts[clientKey] = new ClientLayout
                             {
                                 ClientKey = clientKey,
-                                StageRect = new Rect(left, top, box.Width, box.Height),
+                                StageRect = freeRect,
                                 IsPlaced = true,
                                 IsSnapped = false,
                                 SnapAnchorID = ""
@@ -1086,8 +1253,6 @@ namespace SharpKVM
                 client.WheelSensitivity = config.WheelSensitivity; 
                 slider.Value = config.Sensitivity;
                 wheelSlider.Value = config.WheelSensitivity;
-                _layoutMode = config.LayoutMode;
-                _cmbLayoutMode.SelectedIndex = _layoutMode == LayoutMode.Free ? 1 : 0;
 
                 if (config.IsPlaced && config.Width > 0 && config.Height > 0) {
                     _clientLayouts[ip] = new ClientLayout
