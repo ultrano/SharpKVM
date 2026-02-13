@@ -467,7 +467,23 @@ namespace SharpKVM
             if (!_autoStartClientMode) return;
             if (!string.IsNullOrWhiteSpace(_autoServerIP)) _txtServerIP.Text = _autoServerIP;
             _tabControl.SelectedIndex = 1;
-            await StartClientLoop();
+            await AutoStartClientConnectionAsync();
+        }
+
+        private async Task AutoStartClientConnectionAsync()
+        {
+            if (_isClientRunning) return;
+            _btnConnect.IsEnabled = false;
+            try
+            {
+                // Let UI settle first, then start connection loop in background.
+                await Task.Delay(200);
+                _ = StartClientLoop();
+            }
+            finally
+            {
+                _btnConnect.IsEnabled = true;
+            }
         }
 
         private void InitializeUI()
