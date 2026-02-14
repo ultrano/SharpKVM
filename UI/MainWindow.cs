@@ -1587,10 +1587,16 @@ namespace SharpKVM
             double targetY = rootScreen.Bounds.Y + (rootScreen.Bounds.Height * ratioY);
             int buffer = 10;
 
-            if (exitEdge == EdgeDirection.Left) targetX = rootScreen.Bounds.Left + buffer;
-            else if (exitEdge == EdgeDirection.Right) targetX = rootScreen.Bounds.Right - buffer;
-            else if (exitEdge == EdgeDirection.Top) targetY = rootScreen.Bounds.Top + buffer;
-            else if (exitEdge == EdgeDirection.Bottom) targetY = rootScreen.Bounds.Bottom - buffer;
+            // Return through the boundary that is actually connected to local.
+            // Using exitEdge directly can place cursor on the opposite side.
+            var localEntryEdge = _activeEntryEdge != EdgeDirection.None
+                ? OppositeEdge(_activeEntryEdge)
+                : exitEdge;
+
+            if (localEntryEdge == EdgeDirection.Left) targetX = rootScreen.Bounds.Left + buffer;
+            else if (localEntryEdge == EdgeDirection.Right) targetX = rootScreen.Bounds.Right - buffer;
+            else if (localEntryEdge == EdgeDirection.Top) targetY = rootScreen.Bounds.Top + buffer;
+            else if (localEntryEdge == EdgeDirection.Bottom) targetY = rootScreen.Bounds.Bottom - buffer;
 
             _isRemoteActive = false;
             _activeRemoteClient = null;
