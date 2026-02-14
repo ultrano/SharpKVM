@@ -67,6 +67,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 
 #### Server 탭
 - `Start Server` / `Stop Server` 토글 버튼
+- (Debug 빌드 전용) `Add Virtual Client` 버튼: 루프백(`127.0.0.1`) 가상 클라이언트 1대 연결
 - 서버 상태/주소 Text (`IP: <addr> / Port: 11000`)
 - `Layout` 콤보박스: `Snap`, `Free`
 - 배치 편집 영역:
@@ -138,6 +139,13 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 - 원격 활성 상태에서 로컬 이벤트 suppress 처리
 - 마우스 이동은 pending 좌표로 축적 후 전송 루프에서 송신
 - 드래그 중에는 지연 없이 즉시 MouseMove 전송
+
+### 7.4 디버그 가상 클라이언트
+- 목적: 실장치 없이 서버 모드 동작 테스트
+- 활성 조건: Debug 빌드에서만 버튼 노출
+- 연결 방식: `TcpClient` 루프백 연결 후 `Hello`/`PlatformInfo` 패킷 전송
+- 제한: 1대만 동시 실행 가능 (중복 시작 방지)
+- 서버 종료 시 가상 클라이언트도 함께 종료
 
 ## 8. 클라이언트 모드 기능 명세
 

@@ -47,6 +47,10 @@ namespace SharpKVM
         private Button _btnConnect = null!;
         private TextBox _txtLog = null!;
         private ComboBox _cmbLayoutMode = null!;
+#if DEBUG
+        private Button? _btnAddVirtualClient;
+        private VirtualClientHost? _virtualClientHost;
+#endif
 
         private TcpListener? _serverListener;
         private List<ClientHandler> _connectedClients = new List<ClientHandler>();
@@ -168,6 +172,10 @@ namespace SharpKVM
             _btnStartServer = new Button { Content = "Start Server" };
             _btnStartServer.Click += ToggleServerState;
             _lblServerInfo = new TextBlock { Text = "Status: Stopped", VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.Bold };
+#if DEBUG
+            _btnAddVirtualClient = new Button { Content = "Add Virtual Client" };
+            _btnAddVirtualClient.Click += OnAddVirtualClientClicked;
+#endif
             _cmbLayoutMode = new ComboBox
             {
                 Width = 130,
@@ -182,6 +190,9 @@ namespace SharpKVM
             };
             
             srvHeader.Children.Add(_btnStartServer);
+#if DEBUG
+            srvHeader.Children.Add(_btnAddVirtualClient);
+#endif
             srvHeader.Children.Add(_lblServerInfo);
             srvHeader.Children.Add(new TextBlock { Text = "Layout", VerticalAlignment = VerticalAlignment.Center });
             srvHeader.Children.Add(_cmbLayoutMode);
@@ -1144,6 +1155,7 @@ namespace SharpKVM
 
         private void StopServer() {
             _isServerRunning = false;
+            StopVirtualClientForDebug();
             
             // [?醫됲뇣] ?袁⑸꽊 ?룐뫂遊??類?
             _mouseSenderCts?.Cancel();
