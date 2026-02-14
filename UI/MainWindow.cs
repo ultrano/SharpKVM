@@ -135,7 +135,7 @@ namespace SharpKVM
 
         public MainWindow()
         {
-            this.Title = "SharpKVM (v7.5)";
+            this.Title = "SharpKVM (v7.6)";
             this.Width = 1000;
             this.Height = 750;
             this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -1961,6 +1961,10 @@ namespace SharpKVM
                     case PacketType.KeyDown: 
                     case PacketType.KeyUp:
                         var code = (KeyCode)p.KeyCode;
+                        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && code == KeyCode.VcCapsLock) {
+                            CursorManager.SendMacRawKey(CursorManager.MacCapsLockKeyCode, p.Type == PacketType.KeyDown);
+                            return;
+                        }
                         // [??륁젟] ??? ??뺤쒔?癒?퐣 OS??筌띿쉳苡????꾨뗀諭띄몴?癰궰??묐퉸??癰귣?沅▽틠??嚥??????곷섧?紐껊뮉 筌ㅼ뮇???뽰벥 筌ｌ꼶?곻쭕???묐뻬
                         // (?? ?????곷섧?硫? 筌띘쇱뵬 ??Mission Control ?紐꺿봺椰?嚥≪뮇彛?? ?醫?)
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {

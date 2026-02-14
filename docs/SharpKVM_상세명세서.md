@@ -1,6 +1,6 @@
 ﻿# SharpKVM 상세 명세서 (코드베이스 기준)
 
-문서 버전: 1.1  
+문서 버전: 1.2  
 작성일: 2026-02-14  
 코드 기준: `App/Program.cs`, `UI/MainWindow.cs`, `SharpKVM.csproj`, `SharpKVM.sln`
 
@@ -55,7 +55,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 ## 5. 화면(UI) 명세
 
 ### 5.1 Main Window
-- 제목: `SharpKVM (v7.5)`
+- 제목: `SharpKVM (v7.6)`
 - 기본 크기: `1000 x 750`
 - 구성:
 1. 상단(자동 높이): 탭 헤더
@@ -190,6 +190,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 - 원격이 macOS인 경우 modifier 매핑 보정:
 - `Meta ↔ Alt` 교환
 - `Hangul` 키 입력은 macOS `CapsLock`으로 매핑
+- macOS 수신 측에서 `CapsLock`은 Raw 키 이벤트(`keycode 57`)로 처리
 
 ### 9.5 마우스 버튼/휠
 - MouseDown/Up 시 clickCount 포함(더블클릭 감지)
@@ -251,6 +252,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 ### 12.2 macOS
 - CoreGraphics 기반 Raw 이벤트:
 - 클릭(`SendMacRawClick`), 이동(`SendMacRawMove`), 드래그(`SendMacRawDrag`)
+- 키보드(`SendMacRawKey`)는 `CapsLock` 입력 전환 경로에 사용
 - 클릭/드래그의 OtherButton 경로는 `Button3+`(예: Windows `Button4/5`)를 포함
 - 커서 hide/show/warp
 - `Ctrl + 방향키` 기반 Mission Control 스크립트 트리거 지원

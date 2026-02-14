@@ -32,6 +32,9 @@ namespace SharpKVM
         private static extern IntPtr CGEventCreateMouseEvent(IntPtr source, uint mouseType, CGPoint mouseCursorPosition, int mouseButton);
 
         [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+        private static extern IntPtr CGEventCreateKeyboardEvent(IntPtr source, ushort virtualKey, bool keyDown);
+
+        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
         private static extern IntPtr CGEventSourceCreate(int sourceState);
 
         [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
@@ -49,6 +52,7 @@ namespace SharpKVM
         private static bool _isHidden = false;
         private const uint SPI_SETCURSORS = 0x0057;
         private const uint OCR_NORMAL = 32512;
+        public const int MacCapsLockKeyCode = 57;
 
         public static void LockToRect(Rect bounds)
         {
@@ -110,6 +114,21 @@ namespace SharpKVM
                     CFRelease(mouseEvent);
                 }
             } catch {}
+        }
+
+        public static void SendMacRawKey(int macVirtualKeyCode, bool isDown)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
+            try
+            {
+                IntPtr keyEvent = CGEventCreateKeyboardEvent(IntPtr.Zero, (ushort)macVirtualKeyCode, isDown);
+                if (keyEvent != IntPtr.Zero)
+                {
+                    CGEventPost(0, keyEvent);
+                    CFRelease(keyEvent);
+                }
+            }
+            catch {}
         }
 
         public static void Unlock()
