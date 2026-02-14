@@ -931,10 +931,10 @@ namespace SharpKVM
                         layout.AnchorScreenID = slot.ParentID;
                         layout.AnchorEdge = slot.Direction switch
                         {
-                            "Left" => EdgeDirection.Left,
-                            "Right" => EdgeDirection.Right,
-                            "Top" => EdgeDirection.Top,
-                            "Bottom" => EdgeDirection.Bottom,
+                            "Left" => EdgeDirection.Right,
+                            "Right" => EdgeDirection.Left,
+                            "Top" => EdgeDirection.Bottom,
+                            "Bottom" => EdgeDirection.Top,
                             _ => EdgeDirection.None
                         };
                     }
@@ -1067,10 +1067,10 @@ namespace SharpKVM
                             AnchorScreenID = slot.ParentID,
                             AnchorEdge = slot.Direction switch
                             {
-                                "Left" => EdgeDirection.Left,
-                                "Right" => EdgeDirection.Right,
-                                "Top" => EdgeDirection.Top,
-                                "Bottom" => EdgeDirection.Bottom,
+                                "Left" => EdgeDirection.Right,
+                                "Right" => EdgeDirection.Left,
+                                "Top" => EdgeDirection.Bottom,
+                                "Bottom" => EdgeDirection.Top,
                                 _ => EdgeDirection.None
                             }
                         };
@@ -1739,7 +1739,28 @@ namespace SharpKVM
                 }
                 else
                 {
-                    ReturnToLocal(exit);
+                    // Return to local only through the edge that is connected to local.
+                    // Other edges should stay on current remote client.
+                    bool canReturnToLocal = _activeEntryEdge == EdgeDirection.None || exit == _activeEntryEdge;
+                    if (canReturnToLocal)
+                    {
+                        ReturnToLocal(exit);
+                    }
+                    else
+                    {
+                        _virtualX = Math.Clamp(_virtualX, 0, Math.Max(0, clientW - 1));
+                        _virtualY = Math.Clamp(_virtualY, 0, Math.Max(0, clientH - 1));
+
+                        _pendingMouseX = (int)_virtualX;
+                        _pendingMouseY = (int)_virtualY;
+                        _hasPendingMouse = true;
+
+                        _ignoreNextMove = true;
+                        _skipMoveCount = dragging ? 0 : 2;
+                        _simulator?.SimulateMouseMovement((short)centerX, (short)centerY);
+                        CursorManager.LockToRect(new Rect(centerX, centerY, 1, 1));
+                        CursorManager.Hide();
+                    }
                 }
                 e.SuppressEvent = true;
                 return;
