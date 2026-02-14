@@ -45,6 +45,7 @@ namespace SharpKVM
         private Button _btnStartServer = null!;
         private TextBox _txtServerIP = null!;
         private Button _btnConnect = null!;
+        private CheckBox? _chkMacCapsLockInputSourceSwitch;
         private TextBox _txtLog = null!;
         private ComboBox _cmbLayoutMode = null!;
 #if DEBUG
@@ -239,6 +240,21 @@ namespace SharpKVM
             _btnConnect = new Button { Content = "Connect", Width = 200, HorizontalContentAlignment = HorizontalAlignment.Center };
             _btnConnect.Click += ToggleClientConnection;
             clientPanel.Children.Add(_btnConnect);
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                _chkMacCapsLockInputSourceSwitch = new CheckBox
+                {
+                    Content = "Enable CapsLock Input Source Switch",
+                    IsChecked = true
+                };
+                _chkMacCapsLockInputSourceSwitch.IsCheckedChanged += (_, _) =>
+                {
+                    Log($"Mac CapsLock Input Source Switch: {(_chkMacCapsLockInputSourceSwitch.IsChecked == true ? "ON" : "OFF")}");
+                };
+                clientPanel.Children.Add(_chkMacCapsLockInputSourceSwitch);
+            }
+
             clientTab.Content = clientPanel;
 
             _tabControl.Items.Add(serverTab);
@@ -1868,6 +1884,13 @@ namespace SharpKVM
                             {
                                 _macInputSourceHotkeys = startupHotkeys;
                                 _lastMacInputSourceHotkeyRefresh = DateTime.UtcNow;
+                                Dispatcher.UIThread.Post(() =>
+                                {
+                                    if (_chkMacCapsLockInputSourceSwitch != null)
+                                    {
+                                        _chkMacCapsLockInputSourceSwitch.IsChecked = diagnostics.IsCapsLockInputSourceSwitchEnabled;
+                                    }
+                                });
                             }
                             else
                             {
@@ -1963,7 +1986,7 @@ namespace SharpKVM
             foreach (var hotkey in _macInputSourceHotkeys.Enumerate())
             {
                 if (!hotkey.Matches(_remotePressedKeys, triggerKey)) continue;
-                if (hotkey.IsCapsLockPlainSwitch && !_macInputSourceHotkeys.IsCapsLockInputSourceSwitchEnabled) continue;
+                if (hotkey.IsCapsLockPlainSwitch && !IsMacCapsLockInputSourceSwitchEnabled()) continue;
                 if (!MacInputSourceSwitcher.Execute(hotkey)) return false;
 
                 foreach (var key in _remotePressedKeys)
@@ -1980,6 +2003,13 @@ namespace SharpKVM
             }
 
             return false;
+        }
+
+        private bool IsMacCapsLockInputSourceSwitchEnabled()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return false;
+            if (_chkMacCapsLockInputSourceSwitch == null) return _macInputSourceHotkeys?.IsCapsLockInputSourceSwitchEnabled ?? false;
+            return _chkMacCapsLockInputSourceSwitch.IsChecked == true;
         }
 
         private void SimulateInput(InputPacket p) {
