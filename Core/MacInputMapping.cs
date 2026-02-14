@@ -12,8 +12,6 @@ public static class MacInputMapping
             KeyCode.VcRightMeta => KeyCode.VcRightAlt,
             KeyCode.VcLeftAlt => KeyCode.VcLeftMeta,
             KeyCode.VcRightAlt => KeyCode.VcRightMeta,
-            KeyCode.VcHangul => KeyCode.VcCapsLock,
-            KeyCode.VcCapsLock => KeyCode.VcCapsLock,
             _ => code
         };
     }

@@ -108,6 +108,11 @@ namespace SharpKVM
         
         private bool _isRemoteCtrlDown = false;
         private DateTime _lastMacShortcutTime = DateTime.MinValue;
+        private MacInputSourceHotkeys? _macInputSourceHotkeys;
+        private DateTime _lastMacInputSourceHotkeyRefresh = DateTime.MinValue;
+        private readonly HashSet<KeyCode> _remotePressedKeys = new HashSet<KeyCode>();
+        private readonly HashSet<KeyCode> _forwardedRemoteKeys = new HashSet<KeyCode>();
+        private readonly HashSet<KeyCode> _consumedInputSourceKeys = new HashSet<KeyCode>();
         private bool _isLocalCtrlDown = false;
         private bool _isLocalMetaDown = false;
 
@@ -1833,7 +1838,17 @@ namespace SharpKVM
         }
 
         private async void ToggleClientConnection(object? s, RoutedEventArgs e) { if (_isClientRunning) StopClient(); else await StartClientLoop(); }
-        private void StopClient() { _isClientRunning = false; _currentClientSocket?.Close(); _btnConnect.Content = "Connect"; _btnConnect.IsEnabled = true; Log("Client Stopped."); }
+        private void StopClient() {
+            _isClientRunning = false;
+            _currentClientSocket?.Close();
+            _remotePressedKeys.Clear();
+            _forwardedRemoteKeys.Clear();
+            _consumedInputSourceKeys.Clear();
+            _macInputSourceHotkeys = null;
+            _btnConnect.Content = "Connect";
+            _btnConnect.IsEnabled = true;
+            Log("Client Stopped.");
+        }
         
         private async Task StartClientLoop() {
             _isClientRunning = true; _btnConnect.Content = "Disconnect"; SaveConfig();
@@ -1911,6 +1926,46 @@ namespace SharpKVM
             }
         }
 
+        private void RefreshMacInputSourceHotkeysIfNeeded()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
+            if ((DateTime.UtcNow - _lastMacInputSourceHotkeyRefresh).TotalSeconds < 10) return;
+            _lastMacInputSourceHotkeyRefresh = DateTime.UtcNow;
+
+            if (!MacInputSourceHotkeyProvider.TryLoad(out var hotkeys))
+            {
+                _macInputSourceHotkeys = null;
+                return;
+            }
+
+            _macInputSourceHotkeys = hotkeys;
+        }
+
+        private bool TryHandleMacInputSourceHotkey(KeyCode triggerKey)
+        {
+            if (_macInputSourceHotkeys == null) return false;
+
+            foreach (var hotkey in _macInputSourceHotkeys.Enumerate())
+            {
+                if (!hotkey.Matches(_remotePressedKeys, triggerKey)) continue;
+                if (!MacInputSourceSwitcher.Execute(hotkey)) return false;
+
+                foreach (var key in _remotePressedKeys)
+                {
+                    _consumedInputSourceKeys.Add(key);
+                    if (_forwardedRemoteKeys.Remove(key))
+                    {
+                        _simulator?.SimulateKeyRelease(key);
+                    }
+                }
+
+                Log($"Input Source Hotkey Triggered ({hotkey.SymbolicHotkeyId})");
+                return true;
+            }
+
+            return false;
+        }
+
         private void SimulateInput(InputPacket p) {
             try {
                 switch(p.Type) {
@@ -1961,18 +2016,28 @@ namespace SharpKVM
                     case PacketType.KeyDown: 
                     case PacketType.KeyUp:
                         var code = (KeyCode)p.KeyCode;
-                        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && code == KeyCode.VcCapsLock) {
-                            CursorManager.SendMacRawKey(CursorManager.MacCapsLockKeyCode, p.Type == PacketType.KeyDown);
-                            return;
-                        }
+                        bool isKeyDown = p.Type == PacketType.KeyDown;
                         // [??륁젟] ??? ??뺤쒔?癒?퐣 OS??筌띿쉳苡????꾨뗀諭띄몴?癰궰??묐퉸??癰귣?沅▽틠??嚥??????곷섧?紐껊뮉 筌ㅼ뮇???뽰벥 筌ｌ꼶?곻쭕???묐뻬
                         // (?? ?????곷섧?硫? 筌띘쇱뵬 ??Mission Control ?紐꺿봺椰?嚥≪뮇彛?? ?醫?)
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
-                            if (code == KeyCode.VcLeftControl || code == KeyCode.VcRightControl) {
-                                _isRemoteCtrlDown = (p.Type == PacketType.KeyDown);
+                            if (isKeyDown) _remotePressedKeys.Add(code);
+                            else _remotePressedKeys.Remove(code);
+
+                            RefreshMacInputSourceHotkeysIfNeeded();
+
+                            if (!isKeyDown && _consumedInputSourceKeys.Remove(code)) {
+                                return;
                             }
 
-                            if (p.Type == PacketType.KeyDown && _isRemoteCtrlDown) {
+                            if (isKeyDown && TryHandleMacInputSourceHotkey(code)) {
+                                return;
+                            }
+
+                            if (code == KeyCode.VcLeftControl || code == KeyCode.VcRightControl) {
+                                _isRemoteCtrlDown = isKeyDown;
+                            }
+
+                            if (isKeyDown && _isRemoteCtrlDown) {
                                 if (code == KeyCode.VcLeft || code == KeyCode.VcRight || code == KeyCode.VcUp || code == KeyCode.VcDown) {
                                     TriggerMacMissionControl(code);
                                     return; 
@@ -1980,8 +2045,15 @@ namespace SharpKVM
                             }
                         }
 
-                        if (p.Type == PacketType.KeyDown) _simulator?.SimulateKeyPress(code);
-                        else _simulator?.SimulateKeyRelease(code);
+                        if (isKeyDown) {
+                            _simulator?.SimulateKeyPress(code);
+                            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) _forwardedRemoteKeys.Add(code);
+                        }
+                        else {
+                            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || _forwardedRemoteKeys.Remove(code)) {
+                                _simulator?.SimulateKeyRelease(code);
+                            }
+                        }
                         break;
                 }
             } catch {}

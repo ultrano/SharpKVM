@@ -17,22 +17,22 @@ public class MacInputMappingTests
         Assert.Equal(expected, mapped);
     }
 
-    [Theory]
-    [InlineData(KeyCode.VcHangul)]
-    [InlineData(KeyCode.VcCapsLock)]
-    public void MapKeyCodeForMacRemote_MapsHangulAndCapsLockToCapsLock(KeyCode input)
-    {
-        var mapped = MacInputMapping.MapKeyCodeForMacRemote(input);
-
-        Assert.Equal(KeyCode.VcCapsLock, mapped);
-    }
-
     [Fact]
     public void MapKeyCodeForMacRemote_LeavesOtherKeysUnchanged()
     {
         var mapped = MacInputMapping.MapKeyCodeForMacRemote(KeyCode.VcA);
 
         Assert.Equal(KeyCode.VcA, mapped);
+    }
+
+    [Theory]
+    [InlineData(KeyCode.VcHangul)]
+    [InlineData(KeyCode.VcCapsLock)]
+    public void MapKeyCodeForMacRemote_LeavesHangulAndCapsLockUnchanged(KeyCode input)
+    {
+        var mapped = MacInputMapping.MapKeyCodeForMacRemote(input);
+
+        Assert.Equal(input, mapped);
     }
 
     [Theory]
