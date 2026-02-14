@@ -21,4 +21,9 @@
     <None Include="AppIcon.icns" Pack="true" PackagePath=""/>
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="SharpKVM.Tests\**\*.cs" />
+    <None Include="SharpKVM.Tests\**\*" />
+  </ItemGroup>
+
 </Project>

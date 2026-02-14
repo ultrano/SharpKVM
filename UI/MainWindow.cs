@@ -1,4 +1,4 @@
-﻿using Avalonia;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -27,291 +27,7 @@ using System.Threading.Tasks;
 
 namespace SharpKVM
 {
-    public enum PacketType : byte { Hello = 0, MouseMove = 1, MouseDown = 2, MouseUp = 3, KeyDown = 4, KeyUp = 5, MouseWheel = 6, Clipboard = 7, ClipboardFile = 8, ClipboardImage = 9, PlatformInfo = 10 }
-    
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct InputPacket { public PacketType Type; public int X; public int Y; public int KeyCode; public int ClickCount; }
-
-    public class ScreenInfo
-    {
-        public string ID { get; set; } = string.Empty; 
-        public Rect Bounds;
-        public bool IsPrimary;
-        public Rect UIBounds; 
-    }
-
-    public class ClientConfig
-    {
-        public string IP { get; set; } = "";
-        public double X { get; set; } = -1;
-        public double Y { get; set; } = -1;
-        public double Width { get; set; } = -1;
-        public double Height { get; set; } = -1;
-        public double DesktopX { get; set; } = -1;
-        public double DesktopY { get; set; } = -1;
-        public double DesktopWidth { get; set; } = -1;
-        public double DesktopHeight { get; set; } = -1;
-        public bool IsPlaced { get; set; } = false;
-        public bool IsSnapped { get; set; } = false;
-        public string SnapAnchorID { get; set; } = "";
-        public LayoutMode LayoutMode { get; set; } = LayoutMode.Snap;
-        public double Sensitivity { get; set; } = 3.0; 
-        public double WheelSensitivity { get; set; } = 1.0; 
-    }
-
-    public enum LayoutMode
-    {
-        Snap,
-        Free
-    }
-
-    public enum EdgeDirection
-    {
-        None,
-        Left,
-        Right,
-        Top,
-        Bottom
-    }
-
-    public class ClientLayout
-    {
-        public string ClientKey { get; set; } = "";
-        public Rect StageRect { get; set; }
-        public Rect DesktopRect { get; set; }
-        public bool IsPlaced { get; set; }
-        public bool IsSnapped { get; set; }
-        public string SnapAnchorID { get; set; } = "";
-        public string AnchorScreenID { get; set; } = "";
-        public EdgeDirection AnchorEdge { get; set; } = EdgeDirection.None;
-    }
-
-    class Program
-    {
-        public static string[] LaunchArgs { get; private set; } = Array.Empty<string>();
-
-        [STAThread]
-        public static void Main(string[] args)
-        {
-            LaunchArgs = args ?? Array.Empty<string>();
-            BuildAvaloniaApp().StartWithClassicDesktopLifetime(LaunchArgs);
-        }
-
-        public static AppBuilder BuildAvaloniaApp()
-            => AppBuilder.Configure<App>()
-                .UsePlatformDetect()
-                .WithInterFont()
-                .LogToTrace();
-    }
-
-    public class App : Application
-    {
-        public override void Initialize() => Styles.Add(new FluentTheme());
-        public override void OnFrameworkInitializationCompleted()
-        {
-            if (ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
-            {
-                desktop.MainWindow = new MainWindow();
-            }
-            base.OnFrameworkInitializationCompleted();
-        }
-    }
-
-    public static class CursorManager
-    {
-        [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left; public int top; public int right; public int bottom; }
-        [StructLayout(LayoutKind.Sequential)] public struct CGPoint { public double x; public double y; }
-
-        [DllImport("user32.dll")] private static extern bool ClipCursor(ref RECT lpRect);
-        [DllImport("user32.dll")] private static extern bool ClipCursor(IntPtr lpRect);
-        [DllImport("user32.dll")] private static extern bool SetSystemCursor(IntPtr hcur, uint id);
-        [DllImport("user32.dll")] private static extern IntPtr CreateCursor(IntPtr hInst, int xHotSpot, int yHotSpot, int nWidth, int nHeight, byte[] pvANDPlane, byte[] pvXORPlane);
-        [DllImport("user32.dll")] private static extern bool SystemParametersInfo(uint uiAction, uint uiParam, IntPtr pvParam, uint fWinIni);
-        
-        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-        private static extern int CGDisplayHideCursor(uint display);
-        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-        private static extern int CGDisplayShowCursor(uint display);
-        
-        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-        private static extern void CGWarpMouseCursorPosition(CGPoint newCursorPosition);
-
-        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-        private static extern int CGAssociateMouseAndMouseCursorPosition(bool connected);
-
-        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-        private static extern IntPtr CGEventCreateMouseEvent(IntPtr source, uint mouseType, CGPoint mouseCursorPosition, int mouseButton);
-
-        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-        private static extern IntPtr CGEventSourceCreate(int sourceState);
-
-        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-        private static extern void CGEventPost(uint tap, IntPtr ev);
-
-        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-        private static extern void CFRelease(IntPtr obj);
-
-        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-        private static extern void CGEventSetIntegerValueField(IntPtr ev, int field, long value);
-
-        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-        private static extern void CGEventSetLocation(IntPtr ev, CGPoint pos);
-
-        private static bool _isHidden = false;
-        private const uint SPI_SETCURSORS = 0x0057;
-        private const uint OCR_NORMAL = 32512;
-
-        public static void LockToRect(Rect bounds)
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                RECT r = new RECT { left = (int)bounds.X, top = (int)bounds.Y, right = (int)(bounds.X + 1), bottom = (int)(bounds.Y + 1) };
-                ClipCursor(ref r);
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                CGWarpMouseCursorPosition(new CGPoint { x = bounds.X, y = bounds.Y });
-            }
-        }
-
-        public static void SendMacRawClick(double x, double y, int button, bool isDown, int clickCount = 1)
-        {
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
-            try {
-                uint type = 0;
-                if (button == 0) type = isDown ? 1u : 2u; // Left MouseDown = 1, MouseUp = 2
-                else if (button == 1) type = isDown ? 3u : 4u; // Right MouseDown = 3, MouseUp = 4
-                else if (button == 2) type = isDown ? 25u : 26u; // Other MouseDown = 25, MouseUp = 26
-
-                if (type == 0) return;
-
-                CGPoint pos = new CGPoint { x = x, y = y };
-                // [v7.1] kCGEventSourceStateCombinedSessionState(0) ???IntPtr.Zero ?ъ슜
-                // Zoom ?곹깭?먯꽌 醫뚰몴媛 ????꾩긽??諛⑹??섍린 ?꾪븿
-                IntPtr mouseEvent = CGEventCreateMouseEvent(IntPtr.Zero, type, pos, button);
-                if (mouseEvent != IntPtr.Zero) {
-                    CGEventSetIntegerValueField(mouseEvent, 1, clickCount);
-
-                    CGEventPost(0, mouseEvent); 
-                    CFRelease(mouseEvent);
-                }
-            } catch {}
-        }
-
-        // [v6.7] 留??대룞 吏?먯쓣 ?꾪븳 ?ㅼ씠?곕툕 硫붿꽌??異붽? (Zoom ?먰봽 ?꾩긽 ?닿껐)
-        public static void SendMacRawMove(double x, double y)
-        {
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
-            try {
-                CGPoint pos = new CGPoint { x = x, y = y };
-                IntPtr mouseEvent = CGEventCreateMouseEvent(IntPtr.Zero, 5u, pos, 0);
-                if (mouseEvent != IntPtr.Zero) {
-                    CGEventPost(0, mouseEvent);
-                    CFRelease(mouseEvent);
-                }
-            } catch {}
-        }
-
-        // [v6.4] 留??쒕옒洹?吏?먯쓣 ?꾪븳 ?ㅼ씠?곕툕 硫붿꽌??異붽?
-        public static void SendMacRawDrag(double x, double y, int button)
-        {
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
-            try {
-                uint type = 0;
-                if (button == 0) type = 6u; // Left MouseDragged = 6
-                else if (button == 1) type = 7u; // Right MouseDragged = 7
-                else if (button == 2) type = 27u; // Other MouseDragged = 27
-
-                if (type == 0) return;
-
-                CGPoint pos = new CGPoint { x = x, y = y };
-                IntPtr mouseEvent = CGEventCreateMouseEvent(IntPtr.Zero, type, pos, button);
-                if (mouseEvent != IntPtr.Zero) {
-                    CGEventPost(0, mouseEvent);
-                    CFRelease(mouseEvent);
-                }
-            } catch {}
-        }
-
-        public static void Unlock()
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                ClipCursor(IntPtr.Zero);
-            }
-        }
-
-        public static void Hide()
-        {
-            try {
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
-                    if (_isHidden) return;
-                    byte[] andPlane = new byte[128]; byte[] xorPlane = new byte[128];
-                    for(int i=0; i<128; i++) andPlane[i] = 0xFF; 
-                    IntPtr transparentCursor = CreateCursor(IntPtr.Zero, 0, 0, 32, 32, andPlane, xorPlane);
-                    SetSystemCursor(transparentCursor, OCR_NORMAL);
-                }
-                else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
-                    CGDisplayHideCursor(0);
-                }
-            } catch {}
-            _isHidden = true;
-        }
-
-        public static void Show()
-        {
-            try {
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
-                    SystemParametersInfo(SPI_SETCURSORS, 0, IntPtr.Zero, 0);
-                }
-                else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
-                    CGAssociateMouseAndMouseCursorPosition(true);
-                    for(int i=0; i<5; i++) CGDisplayShowCursor(0);
-                }
-            } catch {}
-            _isHidden = false;
-        }
-    }
-
-    public static class ClipboardHelper
-    {
-        public static byte[]? GetWindowsClipboardImage()
-        {
-            try {
-                string tempFile = Path.Combine(Path.GetTempPath(), "sharpkvm_clip.png");
-                if (File.Exists(tempFile)) File.Delete(tempFile);
-                var psCommand = "Add-Type -AssemblyName System.Windows.Forms; if ([System.Windows.Forms.Clipboard]::ContainsImage()) { $img = [System.Windows.Forms.Clipboard]::GetImage(); $img.Save('" + tempFile + "', [System.Drawing.Imaging.ImageFormat]::Png); $img.Dispose(); }";
-                var info = new ProcessStartInfo("powershell", $"-Sta -Command \"{psCommand}\"") { CreateNoWindow = true, UseShellExecute = false };
-                Process.Start(info)?.WaitForExit();
-                if (File.Exists(tempFile)) {
-                    byte[] data = File.ReadAllBytes(tempFile);
-                    File.Delete(tempFile);
-                    return data;
-                }
-            } catch {}
-            return null;
-        }
-
-        public static void SetMacClipboardImage(string imagePath)
-        {
-            try {
-                var script = $"set the clipboard to (read (POSIX file \"{imagePath}\") as {{짬class PNGf쨩}})";
-                var info = new ProcessStartInfo("osascript", $"-e '{script}'") { CreateNoWindow = true, UseShellExecute = false };
-                Process.Start(info)?.WaitForExit();
-            } catch {}
-        }
-        
-        public static void SetWindowsClipboardImage(string imagePath)
-        {
-            try {
-                var psCommand = $"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('{imagePath}'))";
-                var info = new ProcessStartInfo("powershell", $"-Sta -Command \"{psCommand}\"") { CreateNoWindow = true, UseShellExecute = false };
-                Process.Start(info)?.WaitForExit();
-            } catch {}
-        }
-    }
-
-    public class MainWindow : Window
+    public partial class MainWindow : Window
     {
         private const int DEFAULT_PORT = 11000;
         private const string DEFAULT_IP = "127.0.0.1";
@@ -401,12 +117,12 @@ namespace SharpKVM
 
         private double _wheelAccumulator = 0;
 
-        // [?좉퇋] ?붾툝?대┃ 吏?먯쓣 ?꾪븳 蹂??
+        // [?醫됲뇣] ?遺얩닜????筌왖?癒?뱽 ?袁る립 癰궰??
         private DateTime _lastClickTime = DateTime.MinValue;
         private int _lastClickButton = -1;
         private int _clickCount = 1;
 
-        // [?좉퇋] ?대씪?댁뼵???꾩옱 ?꾩튂 異붿쟻 蹂??(Zoom 臾몄젣 ?닿껐??
+        // [?醫됲뇣] ?????곷섧???袁⑹삺 ?袁⑺뒄 ?곕뗄??癰궰??(Zoom ?얜챷????욧퍙??
         private double _currentClientX = -1;
         private double _currentClientY = -1;
 
@@ -432,66 +148,6 @@ namespace SharpKVM
             _clipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2000) }; 
             _clipboardTimer.Tick += (s,e) => _ = Task.Run(() => CheckClipboard()); 
             _clipboardTimer.Start();
-        }
-
-        private void ParseLaunchArguments()
-        {
-            var args = Program.LaunchArgs ?? Array.Empty<string>();
-            if (args.Length == 0) return;
-
-            for (int i = 0; i < args.Length; i++)
-            {
-                string a = args[i].Trim();
-                if (a.Equals("client", StringComparison.OrdinalIgnoreCase))
-                {
-                    _autoStartClientMode = true;
-                    if (i + 1 < args.Length) _autoServerIP = args[i + 1].Trim();
-                }
-                else if (a.Equals("--client", StringComparison.OrdinalIgnoreCase) || a.Equals("-c", StringComparison.OrdinalIgnoreCase))
-                {
-                    _autoStartClientMode = true;
-                    if (i + 1 < args.Length) _autoServerIP = args[i + 1].Trim();
-                }
-                else if (a.StartsWith("--client=", StringComparison.OrdinalIgnoreCase))
-                {
-                    _autoStartClientMode = true;
-                    _autoServerIP = a.Substring("--client=".Length).Trim();
-                }
-                else if (a.Equals("--server", StringComparison.OrdinalIgnoreCase) || a.Equals("-s", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (i + 1 < args.Length) _autoServerIP = args[i + 1].Trim();
-                }
-                else if (a.StartsWith("--server=", StringComparison.OrdinalIgnoreCase))
-                {
-                    _autoServerIP = a.Substring("--server=".Length).Trim();
-                }
-            }
-        }
-
-        private async void OnWindowOpened(object? s, EventArgs e)
-        {
-            UpdateScreenCache();
-
-            if (!_autoStartClientMode) return;
-            if (!string.IsNullOrWhiteSpace(_autoServerIP)) _txtServerIP.Text = _autoServerIP;
-            _tabControl.SelectedIndex = 1;
-            await AutoStartClientConnectionAsync();
-        }
-
-        private async Task AutoStartClientConnectionAsync()
-        {
-            if (_isClientRunning) return;
-            _btnConnect.IsEnabled = false;
-            try
-            {
-                // Let UI settle first, then start connection loop in background.
-                await Task.Delay(200);
-                _ = StartClientLoop();
-            }
-            finally
-            {
-                _btnConnect.IsEnabled = true;
-            }
         }
 
         private void InitializeUI()
@@ -571,281 +227,6 @@ namespace SharpKVM
             _txtLog.CaretIndex = _txtLog.Text.Length;
         });
 
-        private void LoadConfig()
-        {
-            try {
-                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CONFIG_FILENAME);
-                if (File.Exists(path)) {
-                    string ip = File.ReadAllText(path).Trim();
-                    if (!string.IsNullOrEmpty(ip)) _txtServerIP.Text = ip; else _txtServerIP.Text = DEFAULT_IP;
-                } else _txtServerIP.Text = DEFAULT_IP;
-            } catch { _txtServerIP.Text = DEFAULT_IP; }
-        }
-
-        private void SaveConfig() { try { string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CONFIG_FILENAME); File.WriteAllText(path, _txtServerIP.Text); } catch { } }
-
-        private void LoadClientConfigs()
-        {
-            try {
-                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CLIENT_CONFIG_FILENAME);
-                if (File.Exists(path)) {
-                    var lines = File.ReadAllLines(path);
-                    bool loadedMode = false;
-                    foreach(var line in lines) {
-                        var parts = line.Split('|');
-                        if (parts.Length >= 11) {
-                            var config = new ClientConfig {
-                                IP = parts[0],
-                                Sensitivity = double.Parse(parts[1]),
-                                WheelSensitivity = double.Parse(parts[2]),
-                                LayoutMode = string.Equals(parts[3], "Free", StringComparison.OrdinalIgnoreCase) ? LayoutMode.Free : LayoutMode.Snap,
-                                X = double.Parse(parts[4]),
-                                Y = double.Parse(parts[5]),
-                                Width = double.Parse(parts[6]),
-                                Height = double.Parse(parts[7]),
-                                IsPlaced = bool.Parse(parts[8]),
-                                IsSnapped = bool.Parse(parts[9]),
-                                SnapAnchorID = parts[10]
-                            };
-                            if (parts.Length >= 15)
-                            {
-                                config.DesktopX = double.Parse(parts[11]);
-                                config.DesktopY = double.Parse(parts[12]);
-                                config.DesktopWidth = double.Parse(parts[13]);
-                                config.DesktopHeight = double.Parse(parts[14]);
-                            }
-                            
-                            _clientConfigs[config.IP] = config;
-                            if (!loadedMode)
-                            {
-                                _layoutMode = config.LayoutMode;
-                                loadedMode = true;
-                            }
-                        }
-                    }
-                }
-            } catch { }
-        }
-
-        private void SaveClientConfigs()
-        {
-            try {
-                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CLIENT_CONFIG_FILENAME);
-                var lines = new List<string>();
-                foreach(var client in _connectedClients) {
-                    string ip = GetClientKey(client);
-                    if (!_clientConfigs.ContainsKey(ip)) _clientConfigs[ip] = new ClientConfig { IP = ip };
-
-                    var cfg = _clientConfigs[ip];
-                    cfg.Sensitivity = client.Sensitivity;
-                    cfg.WheelSensitivity = client.WheelSensitivity;
-                    cfg.LayoutMode = _layoutMode;
-
-                    if (_clientLayouts.TryGetValue(ip, out var layout) && layout.IsPlaced) {
-                        cfg.X = layout.StageRect.X;
-                        cfg.Y = layout.StageRect.Y;
-                        cfg.Width = layout.StageRect.Width;
-                        cfg.Height = layout.StageRect.Height;
-                        cfg.DesktopX = layout.DesktopRect.X;
-                        cfg.DesktopY = layout.DesktopRect.Y;
-                        cfg.DesktopWidth = layout.DesktopRect.Width;
-                        cfg.DesktopHeight = layout.DesktopRect.Height;
-                        cfg.IsPlaced = true;
-                        cfg.IsSnapped = layout.IsSnapped;
-                        cfg.SnapAnchorID = layout.SnapAnchorID;
-                    } else {
-                        cfg.X = -1;
-                        cfg.Y = -1;
-                        cfg.Width = -1;
-                        cfg.Height = -1;
-                        cfg.DesktopX = -1;
-                        cfg.DesktopY = -1;
-                        cfg.DesktopWidth = -1;
-                        cfg.DesktopHeight = -1;
-                        cfg.IsPlaced = false;
-                        cfg.IsSnapped = false;
-                        cfg.SnapAnchorID = "";
-                    }
-                }
-                
-                foreach(var cfg in _clientConfigs.Values) {
-                    lines.Add($"{cfg.IP}|{cfg.Sensitivity}|{cfg.WheelSensitivity}|{cfg.LayoutMode}|{cfg.X}|{cfg.Y}|{cfg.Width}|{cfg.Height}|{cfg.IsPlaced}|{cfg.IsSnapped}|{cfg.SnapAnchorID}|{cfg.DesktopX}|{cfg.DesktopY}|{cfg.DesktopWidth}|{cfg.DesktopHeight}");
-                }
-                File.WriteAllLines(path, lines);
-            } catch { }
-        }
-
-        private async void CheckClipboard()
-        {
-            try {
-                await Dispatcher.UIThread.InvokeAsync(async () => {
-                    var topLevel = TopLevel.GetTopLevel(this);
-                    if (topLevel == null) return;
-                    var clipboard = topLevel.Clipboard;
-                    if (clipboard == null) return;
-                    
-                    var formats = await clipboard.GetFormatsAsync();
-
-                    bool hasImage = formats.Any(f => f.IndexOf("Bitmap", StringComparison.OrdinalIgnoreCase) >= 0 || f.IndexOf("PNG", StringComparison.OrdinalIgnoreCase) >= 0 || f.IndexOf("DeviceIndependentBitmap", StringComparison.OrdinalIgnoreCase) >= 0);
-                    if (hasImage && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                    {
-                        _ = Task.Run(() => {
-                            byte[]? imgData = ClipboardHelper.GetWindowsClipboardImage();
-                            if (imgData != null && imgData.Length > 0) {
-                                string hash = $"IMG_{imgData.Length}_{imgData[0]}_{imgData[^1]}";
-                                Dispatcher.UIThread.Post(() => {
-                                    if (hash != _capturedFileHash) {
-                                        _capturedFileHash = hash; 
-                                        _capturedImage = imgData;
-                                        _capturedText = ""; 
-                                        _capturedFiles.Clear();
-                                        Log($"[Local] Image Captured ({imgData.Length} bytes). Pending...");
-                                        
-                                        if(_isClientRunning) SyncClientClipboardToServer();
-                                    }
-                                });
-                            }
-                        });
-                        return;
-                    }
-
-                    if (formats.Contains(DataFormats.Files)) {
-                        var filesObj = await clipboard.GetDataAsync(DataFormats.Files);
-                        List<string> paths = new List<string>();
-                        if (filesObj is IEnumerable<IStorageItem> storageItems) { foreach(var item in storageItems) if(item.TryGetLocalPath() is string p) paths.Add(p); }
-                        else if (filesObj is IEnumerable<string> filePaths) { paths = filePaths.ToList(); }
-
-                        if (paths.Count > 0) {
-                            string currentHash = string.Join("|", paths);
-                            if (currentHash != _capturedFileHash) {
-                                _capturedFileHash = currentHash; 
-                                _capturedFiles = paths.ToList();
-                                _capturedText = ""; 
-                                _capturedImage = null;
-                                Log($"[Local] Files Captured ({paths.Count}). Pending...");
-                                
-                                if(_isClientRunning) SyncClientClipboardToServer();
-                            }
-                            return;
-                        }
-                    }
-
-                    string? text = await clipboard.GetTextAsync();
-                    if (!string.IsNullOrEmpty(text) && text != _capturedText) {
-                        _capturedText = text; 
-                        _capturedFileHash = ""; 
-                        _capturedFiles.Clear();
-                        _capturedImage = null;
-                        
-                        if(_isClientRunning) SyncClientClipboardToServer();
-                    }
-                });
-            } catch {}
-        }
-
-        private void SyncClientClipboardToServer()
-        {
-            if (!_isClientRunning) return;
-
-            if (!string.IsNullOrEmpty(_capturedText))
-            {
-                if (_capturedText != _lastRecvText && _capturedText != _sentText)
-                {
-                    _sentText = _capturedText;
-                    _sentFileHash = "";
-                    SendClientData(PacketType.Clipboard, Encoding.UTF8.GetBytes(_capturedText));
-                    Log("Sent Text to Server (Client Auto)");
-                }
-            }
-            else if (!string.IsNullOrEmpty(_capturedFileHash))
-            {
-                if (_capturedFileHash != _lastRecvFileHash && _capturedFileHash != _sentFileHash)
-                {
-                    _sentFileHash = _capturedFileHash;
-                    _sentText = "";
-
-                    if (_capturedImage != null)
-                    {
-                        SendClientData(PacketType.ClipboardImage, _capturedImage);
-                        Log("Sent Image to Server (Client Auto)");
-                    }
-                    else if (_capturedFiles.Count > 0)
-                    {
-                        BroadcastFiles(_capturedFiles); 
-                        Log("Sent Files to Server (Client Auto)");
-                    }
-                }
-            }
-        }
-
-        private void TrySyncClipboardToRemote()
-        {
-            if (!string.IsNullOrEmpty(_capturedText) && _capturedText != _sentText)
-            {
-                _sentText = _capturedText;
-                _sentFileHash = ""; 
-                BroadcastClipboard(_capturedText);
-                Log("Synced Text to Remote (Auto)");
-            }
-            else if (!string.IsNullOrEmpty(_capturedFileHash) && _capturedFileHash != _sentFileHash)
-            {
-                _sentFileHash = _capturedFileHash;
-                _sentText = "";
-                
-                if (_capturedImage != null) {
-                    BroadcastImage(_capturedImage);
-                    Log("Synced Image to Remote (Auto)");
-                }
-                else if (_capturedFiles.Count > 0) {
-                    BroadcastFiles(_capturedFiles);
-                    Log("Synced Files to Remote (Auto)");
-                }
-            }
-        }
-
-        private void BroadcastClipboard(string text) {
-            if (_isServerRunning) foreach(var client in _connectedClients) client.SendClipboardPacket(text);
-            else if (_isClientRunning) SendClientData(PacketType.Clipboard, Encoding.UTF8.GetBytes(text));
-        }
-
-        private void BroadcastFiles(List<string> filePaths) {
-            _ = Task.Run(() => {
-                try {
-                    using (var ms = new MemoryStream()) {
-                        using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true)) {
-                            foreach (var path in filePaths) if (File.Exists(path)) archive.CreateEntryFromFile(path, Path.GetFileName(path));
-                        }
-                        byte[] zipBytes = ms.ToArray();
-                        if (zipBytes.Length > 0) {
-                            Dispatcher.UIThread.Post(() => Log($"Sending {filePaths.Count} files..."));
-                            if (_isServerRunning) foreach(var client in _connectedClients) client.SendFilePacket(zipBytes);
-                            else if (_isClientRunning) SendClientData(PacketType.ClipboardFile, zipBytes);
-                        }
-                    }
-                } catch {}
-            });
-        }
-
-        private void BroadcastImage(byte[] imgData) {
-            if (_isServerRunning) foreach(var client in _connectedClients) client.SendImagePacket(imgData);
-            else if (_isClientRunning) SendClientData(PacketType.ClipboardImage, imgData);
-        }
-
-        private void SendClientData(PacketType type, byte[] data) {
-            if (_currentClientSocket != null && _currentClientSocket.Connected) {
-                _ = Task.Run(() => {
-                    try {
-                        InputPacket p = new InputPacket { Type = type, X = data.Length };
-                        int size = Marshal.SizeOf(p); byte[] arr = new byte[size];
-                        IntPtr ptr = Marshal.AllocHGlobal(size); Marshal.StructureToPtr(p, ptr, true); Marshal.Copy(ptr, arr, 0, size); Marshal.FreeHGlobal(ptr);
-                        lock(_currentClientSocket) { 
-                            var stream = _currentClientSocket.GetStream(); stream.Write(arr, 0, size); stream.Write(data, 0, data.Length);
-                        }
-                    } catch {}
-                });
-            }
-        }
-        
         public void SetRemoteClipboard(string text) {
             _lastRecvText = text;
             _lastRecvFileHash = "";
@@ -1750,11 +1131,11 @@ namespace SharpKVM
                 _hook.MousePressed += OnHookMousePressed; _hook.MouseReleased += OnHookMouseReleased;
                 _hook.MouseWheel += OnHookMouseWheel;
                 
-                // [?좉퇋] ?대쭅 ?꾩넚 ?쒖옉
+                // [?醫됲뇣] ??彛??袁⑸꽊 ??뽰삂
                 _mouseSenderCts = new CancellationTokenSource();
                 Task.Run(() => StartMouseSenderLoop(_mouseSenderCts.Token));
 
-                // [?섏젙] ?대씪?댁뼵??蹂닿컙 ?쒓굅濡??명빐 愿??Task ?쒓굅??
+                // [??륁젟] ?????곷섧??癰귣떯而???볤탢嚥??紐낅퉸 ?온??Task ??볤탢??
 
                 Task.Run(() => _hook.Run());
                 AcceptClients();
@@ -1764,11 +1145,11 @@ namespace SharpKVM
         private void StopServer() {
             _isServerRunning = false;
             
-            // [?좉퇋] ?꾩넚 猷⑦봽 ?뺤?
+            // [?醫됲뇣] ?袁⑸꽊 ?룐뫂遊??類?
             _mouseSenderCts?.Cancel();
             _mouseSenderCts = null;
             
-            // [?섏젙] 蹂닿컙 ?쒓굅濡?愿??濡쒖쭅 ??젣
+            // [??륁젟] 癰귣떯而???볤탢嚥??온??嚥≪뮇彛?????
 
             _serverListener?.Stop(); _hook?.Dispose();
             CursorManager.Show(); CursorManager.Unlock(); 
@@ -1781,7 +1162,7 @@ namespace SharpKVM
             SaveClientConfigs(); 
         }
 
-        // [?좉퇋] 留덉슦??醫뚰몴 ?꾩넚 ?꾩슜 猷⑦봽 (120Hz = ~8ms)
+        // [?醫됲뇣] 筌띾뜆????ル슦紐??袁⑸꽊 ?袁⑹뒠 ?룐뫂遊?(120Hz = ~8ms)
         private async Task StartMouseSenderLoop(CancellationToken token)
         {
             try 
@@ -1790,19 +1171,19 @@ namespace SharpKVM
                 {
                     if (_isRemoteActive && _activeRemoteClient != null && _hasPendingMouse)
                     {
-                        // ???놁씠 ?먯옄?곸쑝濡??쎄린 ?쒕룄 (int??atomic)
+                        // ????곸뵠 ?癒?쁽?怨몄몵嚥???꾨┛ ??뺣즲 (int??atomic)
                         int x = _pendingMouseX;
                         int y = _pendingMouseY;
                         
-                        // ?대? 蹂대궦 醫뚰몴硫??ㅽ궢
+                        // ??? 癰귣?沅??ル슦紐댐쭖???쎄땁
                         _hasPendingMouse = false; 
 
-                        // [v6.4] ?쒕옒洹?以묒뿉???⑦궥 ?좎떎 諛⑹?瑜??꾪빐 利됱떆 ?꾩넚???좊━?????덉쑝?? 
-                        // ?꾩옱 猷⑦봽媛 5ms濡?異⑸텇??鍮좊Ⅴ誘濡??쇰떒 ?좎?.
-                        // ?ㅻ쭔, MouseDown/Up??利됱떆 ?꾩넚?섎?濡??쒖꽌 ??쟾 諛⑹?瑜??꾪빐 
-                        // ?쒕옒洹??쒖옉/醫낅즺 ?쒖젏???쒕뵫??醫뚰몴媛 ?덈떎硫?癒쇱? 蹂대궡??濡쒖쭅???꾩슂?????덉쓬.
+                        // [v6.4] ??뺤삋域?餓λ쵐肉?????땅 ?醫롫뼄 獄쎻뫗????袁る퉸 筌앸맩???袁⑸꽊???醫듼봺??????됱몵?? 
+                        // ?袁⑹삺 ?룐뫂遊썲첎? 5ms嚥??겸뫖?????쥓?ㅸ첋?嚥???곕뼊 ?醫?.
+                        // ??살춸, MouseDown/Up??筌앸맩???袁⑸꽊???嚥???뽮퐣 ????獄쎻뫗????袁る퉸 
+                        // ??뺤삋域???뽰삂/?ル굝利???뽰젎????뺣뎃???ル슦紐닷첎? ??덈뼄筌??믪눘? 癰귣?沅??嚥≪뮇彛???袁⑹뒄??????됱벉.
                         
-                        // ?ㅼ젣 ?꾩넚
+                        // ??쇱젫 ?袁⑸꽊
                         _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = x, Y = y });
                     }
                     await Task.Delay(5, token); // ??200Hz
@@ -1816,7 +1197,7 @@ namespace SharpKVM
                 try {
                     if(_serverListener == null) break;
                     var client = await _serverListener.AcceptTcpClientAsync();
-                    // [?섏젙] NoDelay ?ㅼ젙
+                    // [??륁젟] NoDelay ??쇱젟
                     client.NoDelay = true;
 
                     var handler = new ClientHandler(client, this);
@@ -1845,11 +1226,11 @@ namespace SharpKVM
             }
         }
 
-        // [蹂듦뎄] 硫붿꽌??異붽?
+        // [癰귣벀?? 筌롫뗄苑???곕떽?
         private void OnHookMousePressed(object? sender, MouseHookEventArgs e) { 
             if (e.Data.Button == SharpHook.Native.MouseButton.Button1) _isLeftDragging = true; 
             if (_isRemoteActive && _activeRemoteClient != null) { 
-                // [v6.5] ?붾툝?대┃ 濡쒖쭅 異붽?
+                // [v6.5] ?遺얩닜????嚥≪뮇彛??곕떽?
                 var now = DateTime.Now;
                 if (_lastClickButton == (int)e.Data.Button && (now - _lastClickTime).TotalMilliseconds < 500) {
                     _clickCount++;
@@ -1859,7 +1240,7 @@ namespace SharpKVM
                 _lastClickTime = now;
                 _lastClickButton = (int)e.Data.Button;
 
-                // [v6.4] ?대┃ ???쒕뵫???대룞 醫뚰몴媛 ?덈떎硫?利됱떆 ?꾩넚?섏뿬 ?쒖꽌 蹂댁옣
+                // [v6.4] ????????뺣뎃????猷??ル슦紐닷첎? ??덈뼄筌?筌앸맩???袁⑸꽊??뤿연 ??뽮퐣 癰귣똻??
                 if (_hasPendingMouse) {
                     _hasPendingMouse = false;
                     _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = _pendingMouseX, Y = _pendingMouseY });
@@ -1868,7 +1249,7 @@ namespace SharpKVM
                 _activeRemoteClient.SendPacketAsync(new InputPacket { 
                     Type = PacketType.MouseDown, 
                     KeyCode = (int)e.Data.Button,
-                    X = (int)_virtualX, // [?좉퇋] ?대┃ ?쒖젏 醫뚰몴 ?숆린??
+                    X = (int)_virtualX, // [?醫됲뇣] ??????뽰젎 ?ル슦紐???녿┛??
                     Y = (int)_virtualY,
                     ClickCount = _clickCount
                 }); 
@@ -1876,11 +1257,11 @@ namespace SharpKVM
             } 
         }
 
-        // [蹂듦뎄] 硫붿꽌??異붽?
+        // [癰귣벀?? 筌롫뗄苑???곕떽?
         private void OnHookMouseReleased(object? sender, MouseHookEventArgs e) { 
             if (e.Data.Button == SharpHook.Native.MouseButton.Button1) _isLeftDragging = false; 
             if (_isRemoteActive && _activeRemoteClient != null) { 
-                // [v6.4] ?대┃ ?댁젣 ???쒕뵫???대룞 醫뚰몴媛 ?덈떎硫?利됱떆 ?꾩넚
+                // [v6.4] ??????곸젫 ????뺣뎃????猷??ル슦紐닷첎? ??덈뼄筌?筌앸맩???袁⑸꽊
                 if (_hasPendingMouse) {
                     _hasPendingMouse = false;
                     _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = _pendingMouseX, Y = _pendingMouseY });
@@ -1889,7 +1270,7 @@ namespace SharpKVM
                 _activeRemoteClient.SendPacketAsync(new InputPacket { 
                     Type = PacketType.MouseUp, 
                     KeyCode = (int)e.Data.Button,
-                    X = (int)_virtualX, // [?좉퇋] ?대┃ ?쒖젏 醫뚰몴 ?숆린??
+                    X = (int)_virtualX, // [?醫됲뇣] ??????뽰젎 ?ル슦紐???녿┛??
                     Y = (int)_virtualY,
                     ClickCount = _clickCount
                 }); 
@@ -2247,8 +1628,8 @@ namespace SharpKVM
 
             if (_isRemoteActive && _activeRemoteClient != null) { 
                 if (_activeRemoteClient.IsMac) { 
-                    // ?덈룄???쒕쾭) -> 留??대씪) ?????⑥텞??留ㅽ븨 (v6.2 ?섏젙)
-                    // Ctrl -> Ctrl (?숈씪)
+                    // ??덈즲????뺤쒔) -> 筌????? ??????ν뀧??筌띲끋釉?(v6.2 ??륁젟)
+                    // Ctrl -> Ctrl (??덉뵬)
                     // Win -> Opt (VcLeftMeta -> VcLeftAlt)
                     // Alt -> Cmd (VcLeftAlt -> VcLeftMeta)
                     if (code == KeyCode.VcLeftMeta) code = KeyCode.VcLeftAlt;
@@ -2257,9 +1638,9 @@ namespace SharpKVM
                     else if (code == KeyCode.VcRightAlt) code = KeyCode.VcRightMeta;
                 }
 
-                // [v6.6] Caps Lock ?몄뼱 蹂寃?吏?? 
-                // 留μ뿉?쒕뒗 Caps Lock??吏㏐쾶 ?뚮윭 ?몄뼱 蹂寃쎌쓣 ?섎뒗 湲곕뒫???덉쓬.
-                // ?덈룄???쒕쾭?먯꽌 Caps Lock???뚮졇?????대? ?먭꺽吏濡??뺥솗???꾨떖?섎룄濡???
+                // [v6.6] Caps Lock ?紐꾨선 癰궰野?筌왖?? 
+                // 筌띘쇰퓠??뺣뮉 Caps Lock??筌욁룓苡????쑎 ?紐꾨선 癰궰野껋럩????롫뮉 疫꿸퀡?????됱벉.
+                // ??덈즲????뺤쒔?癒?퐣 Caps Lock?????죬??????? ?癒?봄筌왖嚥??類μ넇???袁⑤뼎??롫즲嚥???
 
                 if (code == KeyCode.VcInsert) code = (KeyCode)0xE052; 
                 
@@ -2302,20 +1683,21 @@ namespace SharpKVM
                                 if (this.Screens.Primary != null) {
                                 var bounds = this.Screens.Primary.Bounds;
                                 var hello = new InputPacket { Type = PacketType.Hello, X = (int)bounds.Width, Y = (int)bounds.Height };
-                                byte[] raw = new byte[Marshal.SizeOf(hello)]; IntPtr ptr = Marshal.AllocHGlobal(raw.Length); Marshal.StructureToPtr(hello, ptr, true); Marshal.Copy(ptr, raw, 0, raw.Length); Marshal.FreeHGlobal(ptr);
+                                byte[] raw = InputPacketSerializer.Serialize(hello);
                                 await stream.WriteAsync(raw, 0, raw.Length);
 
-                                // [?좉퇋] ?뚮옯???뺣낫 ?꾩넚
+                                // [?醫됲뇣] ???삸???類ｋ궖 ?袁⑸꽊
                                 int platformCode = RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? 1 : 0;
                                 var platformPacket = new InputPacket { Type = PacketType.PlatformInfo, KeyCode = platformCode };
-                                byte[] pRaw = new byte[Marshal.SizeOf(platformPacket)]; IntPtr pPtr = Marshal.AllocHGlobal(pRaw.Length); Marshal.StructureToPtr(platformPacket, pPtr, true); Marshal.Copy(pPtr, pRaw, 0, pRaw.Length); Marshal.FreeHGlobal(pPtr);
+                                byte[] pRaw = InputPacketSerializer.Serialize(platformPacket);
                                 await stream.WriteAsync(pRaw, 0, pRaw.Length);
                             }
-                            var buffer = new byte[Marshal.SizeOf(typeof(InputPacket))];
+                            int packetSize = Marshal.SizeOf<InputPacket>();
+                            var buffer = new byte[packetSize];
                             while (_isClientRunning) {
                                 int read = await stream.ReadAsync(buffer, 0, buffer.Length);
                                 if (read == 0) throw new Exception("Disconnected"); 
-                                GCHandle h = GCHandle.Alloc(buffer, GCHandleType.Pinned); InputPacket p = (InputPacket)Marshal.PtrToStructure(h.AddrOfPinnedObject(), typeof(InputPacket))!; h.Free();
+                                if (!InputPacketSerializer.TryDeserialize(buffer, out InputPacket p)) continue;
                                 if (p.Type == PacketType.Clipboard) {
                                     int len = p.X; if (len > 0) { byte[] textBytes = new byte[len]; int totalRead = 0; while(totalRead < len) { int r = await stream.ReadAsync(textBytes, totalRead, len - totalRead); if(r==0) break; totalRead += r; } string text = Encoding.UTF8.GetString(textBytes); SetRemoteClipboard(text); }
                                 } 
@@ -2326,7 +1708,7 @@ namespace SharpKVM
                                     int len = p.X; if (len > 0) { byte[] imgBytes = new byte[len]; int totalRead = 0; while (totalRead < len) { int r = await stream.ReadAsync(imgBytes, totalRead, len - totalRead); if (r == 0) break; totalRead += r; } ProcessReceivedImage(imgBytes); }
                                 }
                                 else { 
-                                     SimulateInput(p); // [?섏젙] MainWindow 硫붿꽌???몄텧
+                                     SimulateInput(p); // [??륁젟] MainWindow 筌롫뗄苑???紐꾪뀱
                                 }
                             }
                         }
@@ -2335,7 +1717,7 @@ namespace SharpKVM
             });
         }
 
-        // [蹂듦뎄] 硫붿꽌??異붽?
+        // [癰귣벀?? 筌롫뗄苑???곕떽?
         private void TriggerMacMissionControl(KeyCode code) {
             int macCode = 0;
             if (code == KeyCode.VcLeft) macCode = 123;
@@ -2365,13 +1747,13 @@ namespace SharpKVM
             try {
                 switch(p.Type) {
                     case PacketType.MouseMove: 
-                         // [?섏젙] 利됱떆 ?대룞 諛??꾩옱 ?꾩튂 ?낅뜲?댄듃
+                         // [??륁젟] 筌앸맩????猷?獄??袁⑹삺 ?袁⑺뒄 ??낅쑓??꾨뱜
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
                             if (_isLeftDragging) {
-                                // [v6.4] 留μ뿉???쒕옒洹?以묒씪 ?뚮뒗 MouseDragged ?대깽?몃? 吏곸젒 諛쒖깮?쒗궡
+                                // [v6.4] 筌띘쇰퓠????뺤삋域?餓λ쵐?????뮉 MouseDragged ??源?紐? 筌욊낯??獄쏆뮇源??쀪땀
                                 CursorManager.SendMacRawDrag(p.X, p.Y, 0); // 0 = LeftButton
                             } else {
-                                // [v6.7] 留?Zoom ?섍꼍?먯꽌 Warp ???먰봽 ?꾩긽??留됯린 ?꾪빐 Raw Move ?ъ슜
+                                // [v6.7] 筌?Zoom ??띻펾?癒?퐣 Warp ???癒곕늄 ?袁⑷맒??筌띾맦由??袁る퉸 Raw Move ????
                                 CursorManager.SendMacRawMove(p.X, p.Y);
                             }
                         } else {
@@ -2383,8 +1765,8 @@ namespace SharpKVM
                     
                     case PacketType.MouseDown: 
                         if (p.KeyCode == (int)SharpHook.Native.MouseButton.Button1) _isLeftDragging = true;
-                        // [?섏젙] 留?Zoom ?섍꼍 ??? SimulateMouseMovement + SimulateMousePress 議고빀? 酉고룷?멸? ????꾩긽???덉쓬.
-                        // 吏곸젒 CGEvent瑜??앹꽦?섏뿬 醫뚰몴? ?대┃???숈떆??蹂대궡硫?Zoom ?곹깭?먯꽌???뺥솗???꾩튂???대┃??
+                        // [??륁젟] 筌?Zoom ??띻펾 ???? SimulateMouseMovement + SimulateMousePress 鈺곌퀬鍮?? ?됯퀬猷?硫? ?????袁⑷맒????됱벉.
+                        // 筌욊낯??CGEvent????밴쉐??뤿연 ?ル슦紐?? ???????덈뻻??癰귣?沅∽쭖?Zoom ?怨밴묶?癒?퐣???類μ넇???袁⑺뒄???????
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && p.X >= 0 && p.Y >= 0) {
                             CursorManager.SendMacRawClick(p.X, p.Y, (int)p.KeyCode - 1, true, p.ClickCount);
                         } else {
@@ -2411,8 +1793,8 @@ namespace SharpKVM
                     case PacketType.KeyDown: 
                     case PacketType.KeyUp:
                         var code = (KeyCode)p.KeyCode;
-                        // [?섏젙] ?대? ?쒕쾭?먯꽌 OS??留욊쾶 ??肄붾뱶瑜?蹂?섑빐??蹂대궡二쇰?濡??대씪?댁뼵?몃뒗 理쒖냼?쒖쓽 泥섎━留??섑뻾
-                        // (?? ?대씪?댁뼵?멸? 留μ씪 ??Mission Control ?몃━嫄?濡쒖쭅? ?좎?)
+                        // [??륁젟] ??? ??뺤쒔?癒?퐣 OS??筌띿쉳苡????꾨뗀諭띄몴?癰궰??묐퉸??癰귣?沅▽틠??嚥??????곷섧?紐껊뮉 筌ㅼ뮇???뽰벥 筌ｌ꼶?곻쭕???묐뻬
+                        // (?? ?????곷섧?硫? 筌띘쇱뵬 ??Mission Control ?紐꺿봺椰?嚥≪뮇彛?? ?醫?)
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
                             if (code == KeyCode.VcLeftControl || code == KeyCode.VcRightControl) {
                                 _isRemoteCtrlDown = (p.Type == PacketType.KeyDown);
@@ -2434,199 +1816,4 @@ namespace SharpKVM
         }
     }
     
-    // [ClientHandler 諛?SnapSlot ?좎?]
-    public class ClientHandler
-    {
-        public TcpClient Socket;
-        public string Name;
-        private NetworkStream _stream;
-        public int Width { get; private set; } = 1920;
-        public int Height { get; private set; } = 1080;
-        public bool IsMac { get; private set; } = false;
-        public event Action<object>? Disconnected;
-        
-        public double Sensitivity { get; set; } = 3.0;
-        public double WheelSensitivity { get; set; } = 1.0; 
-
-        private BlockingCollection<byte[]> _sendQueue = new BlockingCollection<byte[]>();
-        private readonly MainWindow _ownerWindow; 
-
-        public ClientHandler(TcpClient s, MainWindow parent)
-        {
-            Socket = s;
-            _stream = s.GetStream();
-            _ownerWindow = parent;
-            Name = "Client-" + ((IPEndPoint)s.Client.RemoteEndPoint!).Address.ToString();
-            Task.Run(SendingLoop);
-        }
-
-        private void SendingLoop()
-        {
-            try
-            {
-                foreach (var data in _sendQueue.GetConsumingEnumerable())
-                {
-                    if (!_stream.CanWrite) break;
-                    _stream.Write(data, 0, data.Length);
-                }
-            }
-            catch
-            {
-                Disconnected?.Invoke(this);
-            }
-        }
-
-        public async Task<bool> HandshakeAsync()
-        {
-            try
-            {
-                int size = Marshal.SizeOf(typeof(InputPacket));
-                byte[] buffer = new byte[size];
-                int bytesRead = await _stream.ReadAsync(buffer, 0, size);
-                if (bytesRead != size) return false;
-                
-                GCHandle h = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-                object? structObj = Marshal.PtrToStructure(h.AddrOfPinnedObject(), typeof(InputPacket));
-                h.Free();
-
-                if (structObj == null) return false;
-                InputPacket p = (InputPacket)structObj;
-                
-                if (p.Type == PacketType.Hello)
-                {
-                    this.Width = p.X;
-                    this.Height = p.Y;
-                    return true;
-                }
-            }
-            catch { }
-            return false;
-        }
-
-        public void StartReading()
-        {
-            var owner = _ownerWindow; 
-
-            _ = Task.Run(async () =>
-            {
-                byte[] buff = new byte[Marshal.SizeOf(typeof(InputPacket))];
-                try
-                {
-                    while (true)
-                    {
-                        int read = await _stream.ReadAsync(buff, 0, buff.Length);
-                        if (read == 0) break;
-
-                        GCHandle h = GCHandle.Alloc(buff, GCHandleType.Pinned);
-                        object? structObj = Marshal.PtrToStructure(h.AddrOfPinnedObject(), typeof(InputPacket));
-                        h.Free();
-
-                        if (structObj == null) continue;
-                        InputPacket p = (InputPacket)structObj;
-
-                        if (p.Type == PacketType.Clipboard)
-                        {
-                            int len = p.X;
-                            if (len > 0)
-                            {
-                                byte[] textBytes = new byte[len];
-                                int totalRead = 0;
-                                while (totalRead < len)
-                                {
-                                    int r = await _stream.ReadAsync(textBytes, totalRead, len - totalRead);
-                                    if (r == 0) break;
-                                    totalRead += r;
-                                }
-                                string text = Encoding.UTF8.GetString(textBytes);
-                                
-                                owner.SetRemoteClipboard(text); 
-                            }
-                        }
-                        else if (p.Type == PacketType.PlatformInfo)
-                        {
-                            this.IsMac = (p.KeyCode == 1);
-                        }
-                        else if (p.Type == PacketType.ClipboardFile)
-                        {
-                            int len = p.X;
-                            if (len > 0)
-                            {
-                                byte[] fileBytes = new byte[len];
-                                int totalRead = 0;
-                                while (totalRead < len)
-                                {
-                                    int r = await _stream.ReadAsync(fileBytes, totalRead, len - totalRead);
-                                    if (r == 0) break;
-                                    totalRead += r;
-                                }
-                                owner.ProcessReceivedFiles(fileBytes); 
-                            }
-                        }
-                        else if (p.Type == PacketType.ClipboardImage)
-                        {
-                            int len = p.X;
-                            if (len > 0)
-                            {
-                                byte[] imgBytes = new byte[len];
-                                int totalRead = 0;
-                                while (totalRead < len)
-                                {
-                                    int r = await _stream.ReadAsync(imgBytes, totalRead, len - totalRead);
-                                    if (r == 0) break;
-                                    totalRead += r;
-                                }
-                                owner.ProcessReceivedImage(imgBytes);
-                            }
-                        }
-                        else 
-                        {
-                            // ?쇰컲 ?낅젰 ?⑦궥 (留덉슦????? 諛붾줈 泥섎━
-                            // [?좉퇋] ?대씪?댁뼵??履쎌뿉?쒕룄 ?⑦궥 泥섎━ 理쒖쟻??(?꾩슂??
-                        }
-                    }
-                }
-                catch { }
-                Disconnected?.Invoke(this);
-            });
-        }
-
-        public void SendClipboardPacket(string text)
-        {
-            byte[] bytes = Encoding.UTF8.GetBytes(text);
-            SendPacketAsync(new InputPacket { Type = PacketType.Clipboard, X = bytes.Length });
-            _sendQueue.Add(bytes);
-        }
-
-        public void SendFilePacket(byte[] data)
-        {
-            SendPacketAsync(new InputPacket { Type = PacketType.ClipboardFile, X = data.Length });
-            _sendQueue.Add(data);
-        }
-
-        public void SendImagePacket(byte[] data)
-        {
-            SendPacketAsync(new InputPacket { Type = PacketType.ClipboardImage, X = data.Length });
-            _sendQueue.Add(data);
-        }
-
-        public void SendPacketAsync(InputPacket p)
-        {
-            int size = Marshal.SizeOf(p);
-            byte[] arr = new byte[size];
-            IntPtr ptr = Marshal.AllocHGlobal(size);
-            Marshal.StructureToPtr(p, ptr, true);
-            Marshal.Copy(ptr, arr, 0, size);
-            Marshal.FreeHGlobal(ptr);
-            _sendQueue.Add(arr);
-        }
-
-        public void Close()
-        {
-            _sendQueue.CompleteAdding();
-            Socket.Close();
-        }
-    }
-
-    public class SnapSlot { public string ID; public Rect Rect; public string ParentID; public string Direction; public SnapSlot(string id, Rect r, string pid, string dir) { ID = id; Rect = r; ParentID = pid; Direction = dir; } }
 }
-

@@ -1,8 +1,8 @@
 ﻿# SharpKVM 상세 명세서 (코드베이스 기준)
 
-문서 버전: 1.0  
+문서 버전: 1.1  
 작성일: 2026-02-14  
-코드 기준: `Program.cs`, `SharpKVM.csproj`, `SharpKVM.sln`
+코드 기준: `App/Program.cs`, `UI/MainWindow.cs`, `SharpKVM.csproj`, `SharpKVM.sln`
 
 ## Agent Quick Start
 - Repository-level guide: `AGENTS.md`
@@ -271,7 +271,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 - 입력 지연 감소를 위해 NoDelay 사용 및 큐 기반 송신 처리
 
 ## 17. 알려진 구현 특성
-- 코드가 `Program.cs` 단일 파일 중심으로 응집되어 있음
+- 코드가 책임별 파일로 분리됨 (`App`, `Core`, `Platform`, `Networking`, `UI`)
 - 일부 주석 문자열 인코딩 깨짐 흔적 존재
 - Linux 전용 분기/최적화는 사실상 없음 (Windows/macOS 중심)
 
