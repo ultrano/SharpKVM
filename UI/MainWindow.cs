@@ -1593,10 +1593,65 @@ namespace SharpKVM
                 ? OppositeEdge(_activeEntryEdge)
                 : exitEdge;
 
-            if (localEntryEdge == EdgeDirection.Left) targetX = rootScreen.Bounds.Left + buffer;
-            else if (localEntryEdge == EdgeDirection.Right) targetX = rootScreen.Bounds.Right - buffer;
-            else if (localEntryEdge == EdgeDirection.Top) targetY = rootScreen.Bounds.Top + buffer;
-            else if (localEntryEdge == EdgeDirection.Bottom) targetY = rootScreen.Bounds.Bottom - buffer;
+            // Free layout: use absolute edge mapping between remote desktop rect and local root screen,
+            // so returning point aligns with the touching boundary instead of snap-like ratios.
+            if (_layoutMode == LayoutMode.Free && _activeRemoteClient != null)
+            {
+                string activeKey = GetClientKey(_activeRemoteClient);
+                if (_clientLayouts.TryGetValue(activeKey, out var activeLayout) && activeLayout.IsPlaced)
+                {
+                    Rect activeRect = activeLayout.DesktopRect.Width > 0 && activeLayout.DesktopRect.Height > 0
+                        ? activeLayout.DesktopRect
+                        : StageToDesktop(activeLayout.StageRect);
+
+                    Point exitPoint = localEntryEdge switch
+                    {
+                        EdgeDirection.Left or EdgeDirection.Right => new Point(
+                            localEntryEdge == EdgeDirection.Left ? activeRect.Left : activeRect.Right,
+                            activeRect.Top + activeRect.Height * ratioY),
+                        EdgeDirection.Top or EdgeDirection.Bottom => new Point(
+                            activeRect.Left + activeRect.Width * ratioX,
+                            localEntryEdge == EdgeDirection.Top ? activeRect.Top : activeRect.Bottom),
+                        _ => activeRect.Center
+                    };
+
+                    if (localEntryEdge == EdgeDirection.Left)
+                    {
+                        targetX = rootScreen.Bounds.Left + buffer;
+                        targetY = Math.Clamp(exitPoint.Y, rootScreen.Bounds.Top + buffer, rootScreen.Bounds.Bottom - buffer);
+                    }
+                    else if (localEntryEdge == EdgeDirection.Right)
+                    {
+                        targetX = rootScreen.Bounds.Right - buffer;
+                        targetY = Math.Clamp(exitPoint.Y, rootScreen.Bounds.Top + buffer, rootScreen.Bounds.Bottom - buffer);
+                    }
+                    else if (localEntryEdge == EdgeDirection.Top)
+                    {
+                        targetY = rootScreen.Bounds.Top + buffer;
+                        targetX = Math.Clamp(exitPoint.X, rootScreen.Bounds.Left + buffer, rootScreen.Bounds.Right - buffer);
+                    }
+                    else if (localEntryEdge == EdgeDirection.Bottom)
+                    {
+                        targetY = rootScreen.Bounds.Bottom - buffer;
+                        targetX = Math.Clamp(exitPoint.X, rootScreen.Bounds.Left + buffer, rootScreen.Bounds.Right - buffer);
+                    }
+                }
+                else
+                {
+                    if (localEntryEdge == EdgeDirection.Left) targetX = rootScreen.Bounds.Left + buffer;
+                    else if (localEntryEdge == EdgeDirection.Right) targetX = rootScreen.Bounds.Right - buffer;
+                    else if (localEntryEdge == EdgeDirection.Top) targetY = rootScreen.Bounds.Top + buffer;
+                    else if (localEntryEdge == EdgeDirection.Bottom) targetY = rootScreen.Bounds.Bottom - buffer;
+                }
+            }
+            else
+            {
+                // Snap layout: keep existing ratio-based behavior with edge anchoring.
+                if (localEntryEdge == EdgeDirection.Left) targetX = rootScreen.Bounds.Left + buffer;
+                else if (localEntryEdge == EdgeDirection.Right) targetX = rootScreen.Bounds.Right - buffer;
+                else if (localEntryEdge == EdgeDirection.Top) targetY = rootScreen.Bounds.Top + buffer;
+                else if (localEntryEdge == EdgeDirection.Bottom) targetY = rootScreen.Bounds.Bottom - buffer;
+            }
 
             _isRemoteActive = false;
             _activeRemoteClient = null;
