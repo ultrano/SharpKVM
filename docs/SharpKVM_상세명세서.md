@@ -1,6 +1,6 @@
 ﻿# SharpKVM 상세 명세서 (코드베이스 기준)
 
-문서 버전: 1.2  
+문서 버전: 1.3  
 작성일: 2026-02-14  
 코드 기준: `App/Program.cs`, `UI/MainWindow.cs`, `SharpKVM.csproj`, `SharpKVM.sln`
 
@@ -55,7 +55,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 ## 5. 화면(UI) 명세
 
 ### 5.1 Main Window
-- 제목: `SharpKVM (v7.6)`
+- 제목: `SharpKVM (v7.7)`
 - 기본 크기: `1000 x 750`
 - 구성:
 1. 상단(자동 높이): 탭 헤더
