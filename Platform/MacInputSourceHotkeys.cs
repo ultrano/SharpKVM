@@ -45,11 +45,35 @@ public sealed class MacInputSourceHotkeys
     public MacInputSourceHotkey? Secondary { get; init; }
     public bool IsCapsLockInputSourceSwitchEnabled { get; init; }
 
+    public static bool ComputeCapsLockOptionEnabled(MacInputSourceHotkey? primary, MacInputSourceHotkey? secondary) =>
+        (primary?.IsCapsLockPlainSwitch ?? false) ||
+        (secondary?.IsCapsLockPlainSwitch ?? false);
+
     public IEnumerable<MacInputSourceHotkey> Enumerate()
     {
         if (Primary != null) yield return Primary;
         if (Secondary != null) yield return Secondary;
     }
+}
+
+public enum MacInputSourceHotkeysLoadStatus
+{
+    Success,
+    NotMacOS,
+    PlistNotFound,
+    PlutilFailed,
+    JsonParseFailed,
+    HotkeysRootMissing,
+    NoInputSourceHotkeys
+}
+
+public sealed class MacInputSourceHotkeysDiagnostics
+{
+    public required MacInputSourceHotkeysLoadStatus Status { get; init; }
+    public required bool IsCapsLockInputSourceSwitchEnabled { get; init; }
+    public required string PrimarySummary { get; init; }
+    public required string SecondarySummary { get; init; }
+    public required string Details { get; init; }
 }
 
 public static class MacInputSourceHotkeyMapper

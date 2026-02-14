@@ -75,4 +75,40 @@ public class MacInputSourceHotkeyMapperTests
 
         Assert.False(hotkey.IsCapsLockPlainSwitch);
     }
+
+    [Fact]
+    public void ComputeCapsLockOptionEnabled_True_WhenAnyHotkeyIsPlainCapsLock()
+    {
+        var hotkey = new MacInputSourceHotkey
+        {
+            Name = "InputSourcePrimary",
+            SymbolicHotkeyId = 60,
+            MacVirtualKeyCode = 57,
+            MacModifierFlags = 0,
+            TriggerKey = KeyCode.VcCapsLock,
+            RequiredModifiers = MacModifierMask.None
+        };
+
+        var enabled = MacInputSourceHotkeys.ComputeCapsLockOptionEnabled(hotkey, null);
+
+        Assert.True(enabled);
+    }
+
+    [Fact]
+    public void ComputeCapsLockOptionEnabled_False_WhenNoCapsLockHotkeys()
+    {
+        var hotkey = new MacInputSourceHotkey
+        {
+            Name = "InputSourcePrimary",
+            SymbolicHotkeyId = 60,
+            MacVirtualKeyCode = 49,
+            MacModifierFlags = 0x00100000,
+            TriggerKey = KeyCode.VcSpace,
+            RequiredModifiers = MacModifierMask.Command
+        };
+
+        var enabled = MacInputSourceHotkeys.ComputeCapsLockOptionEnabled(hotkey, null);
+
+        Assert.False(enabled);
+    }
 }

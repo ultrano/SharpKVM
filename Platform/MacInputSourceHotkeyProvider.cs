@@ -13,9 +13,17 @@ public static class MacInputSourceHotkeyProvider
 
     public static bool TryLoad(out MacInputSourceHotkeys? hotkeys)
     {
+        return TryLoadWithDiagnostics(out hotkeys, out _);
+    }
+
+    public static bool TryLoadWithDiagnostics(out MacInputSourceHotkeys? hotkeys, out MacInputSourceHotkeysDiagnostics diagnostics)
+    {
         hotkeys = null;
+        diagnostics = CreateDiagnostics(MacInputSourceHotkeysLoadStatus.NotMacOS, false, "n/a", "n/a", string.Empty);
+
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
+            diagnostics = CreateDiagnostics(MacInputSourceHotkeysLoadStatus.NotMacOS, false, "n/a", "n/a", "current platform is not macOS");
             return false;
         }
 
@@ -27,6 +35,7 @@ public static class MacInputSourceHotkeyProvider
 
         if (!File.Exists(plistPath))
         {
+            diagnostics = CreateDiagnostics(MacInputSourceHotkeysLoadStatus.PlistNotFound, false, "n/a", "n/a", plistPath);
             return false;
         }
 
@@ -53,11 +62,13 @@ public static class MacInputSourceHotkeyProvider
             p.WaitForExit();
             if (p.ExitCode != 0 || string.IsNullOrWhiteSpace(json))
             {
+                diagnostics = CreateDiagnostics(MacInputSourceHotkeysLoadStatus.PlutilFailed, false, "n/a", "n/a", $"plutil exit={p.ExitCode}");
                 return false;
             }
         }
         catch
         {
+            diagnostics = CreateDiagnostics(MacInputSourceHotkeysLoadStatus.PlutilFailed, false, "n/a", "n/a", "plutil execution error");
             return false;
         }
 
@@ -66,25 +77,37 @@ public static class MacInputSourceHotkeyProvider
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("AppleSymbolicHotKeys", out var hotkeysRoot))
             {
+                diagnostics = CreateDiagnostics(MacInputSourceHotkeysLoadStatus.HotkeysRootMissing, false, "n/a", "n/a", "AppleSymbolicHotKeys missing");
                 return false;
             }
 
             var primary = TryParseHotkey(hotkeysRoot, SymbolicHotkeyPrimary, "InputSourcePrimary");
             var secondary = TryParseHotkey(hotkeysRoot, SymbolicHotkeySecondary, "InputSourceSecondary");
+            bool capsLockEnabled = MacInputSourceHotkeys.ComputeCapsLockOptionEnabled(primary, secondary);
 
             hotkeys = new MacInputSourceHotkeys
             {
                 Primary = primary,
                 Secondary = secondary,
-                IsCapsLockInputSourceSwitchEnabled =
-                    (primary?.IsCapsLockPlainSwitch ?? false) ||
-                    (secondary?.IsCapsLockPlainSwitch ?? false)
+                IsCapsLockInputSourceSwitchEnabled = capsLockEnabled
             };
 
-            return hotkeys.Primary != null || hotkeys.Secondary != null;
+            diagnostics = new MacInputSourceHotkeysDiagnostics
+            {
+                Status = (hotkeys.Primary != null || hotkeys.Secondary != null)
+                    ? MacInputSourceHotkeysLoadStatus.Success
+                    : MacInputSourceHotkeysLoadStatus.NoInputSourceHotkeys,
+                IsCapsLockInputSourceSwitchEnabled = capsLockEnabled,
+                PrimarySummary = DescribeHotkey(primary),
+                SecondarySummary = DescribeHotkey(secondary),
+                Details = plistPath
+            };
+
+            return diagnostics.Status == MacInputSourceHotkeysLoadStatus.Success;
         }
         catch
         {
+            diagnostics = CreateDiagnostics(MacInputSourceHotkeysLoadStatus.JsonParseFailed, false, "n/a", "n/a", "json parse error");
             return false;
         }
     }
@@ -127,4 +150,29 @@ public static class MacInputSourceHotkeyProvider
             RequiredModifiers = MacInputSourceHotkeyMapper.ToModifierMask(modifierFlags)
         };
     }
+
+    private static string DescribeHotkey(MacInputSourceHotkey? hotkey)
+    {
+        if (hotkey == null)
+        {
+            return "none";
+        }
+
+        return $"id={hotkey.SymbolicHotkeyId},key={hotkey.TriggerKey},mods={hotkey.RequiredModifiers},vkey={hotkey.MacVirtualKeyCode}";
+    }
+
+    private static MacInputSourceHotkeysDiagnostics CreateDiagnostics(
+        MacInputSourceHotkeysLoadStatus status,
+        bool capsLockEnabled,
+        string primarySummary,
+        string secondarySummary,
+        string details) =>
+        new MacInputSourceHotkeysDiagnostics
+        {
+            Status = status,
+            IsCapsLockInputSourceSwitchEnabled = capsLockEnabled,
+            PrimarySummary = primarySummary,
+            SecondarySummary = secondarySummary,
+            Details = details
+        };
 }

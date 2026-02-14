@@ -1862,6 +1862,21 @@ namespace SharpKVM
                         
                         await _currentClientSocket.ConnectAsync(ip, DEFAULT_PORT);
                         Dispatcher.UIThread.Post(() => Log("Connected!"));
+                        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                        {
+                            if (MacInputSourceHotkeyProvider.TryLoadWithDiagnostics(out var startupHotkeys, out var diagnostics))
+                            {
+                                _macInputSourceHotkeys = startupHotkeys;
+                                _lastMacInputSourceHotkeyRefresh = DateTime.UtcNow;
+                            }
+                            else
+                            {
+                                _macInputSourceHotkeys = null;
+                            }
+
+                            Dispatcher.UIThread.Post(() => Log(
+                                $"Mac InputSource: status={diagnostics.Status}, capslock_option={diagnostics.IsCapsLockInputSourceSwitchEnabled}, primary=[{diagnostics.PrimarySummary}], secondary=[{diagnostics.SecondarySummary}], details={diagnostics.Details}"));
+                        }
                         using (var stream = _currentClientSocket.GetStream()) {
                                 if (this.Screens.Primary != null) {
                                 var bounds = this.Screens.Primary.Bounds;

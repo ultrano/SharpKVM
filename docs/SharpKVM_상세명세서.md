@@ -192,6 +192,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 - macOS 클라이언트는 입력 소스 단축키(`AppleSymbolicHotKeys` 60/61)를 주기 조회
 - 수신한 키 조합이 현재 입력 소스 단축키와 일치하면 해당 동작을 mac에서 직접 실행
 - `CapsLock` 전환은 mac 옵션 `Use the Caps Lock key to switch to and from ABC`가 반영된 상태에서만 허용
+- macOS 클라이언트 연결 시 입력소스 단축키 로드 결과(status/옵션값/primary/secondary)를 로그에 출력
 
 ### 9.5 마우스 버튼/휠
 - MouseDown/Up 시 clickCount 포함(더블클릭 감지)
