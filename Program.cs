@@ -47,6 +47,10 @@ namespace SharpKVM
         public double Y { get; set; } = -1;
         public double Width { get; set; } = -1;
         public double Height { get; set; } = -1;
+        public double DesktopX { get; set; } = -1;
+        public double DesktopY { get; set; } = -1;
+        public double DesktopWidth { get; set; } = -1;
+        public double DesktopHeight { get; set; } = -1;
         public bool IsPlaced { get; set; } = false;
         public bool IsSnapped { get; set; } = false;
         public string SnapAnchorID { get; set; } = "";
@@ -74,6 +78,7 @@ namespace SharpKVM
     {
         public string ClientKey { get; set; } = "";
         public Rect StageRect { get; set; }
+        public Rect DesktopRect { get; set; }
         public bool IsPlaced { get; set; }
         public bool IsSnapped { get; set; }
         public string SnapAnchorID { get; set; } = "";
@@ -362,6 +367,8 @@ namespace SharpKVM
         private double _layoutScale = 1.0;
         private double _layoutOffsetX = 0;
         private double _layoutOffsetY = 0;
+        private Rect _globalStageBounds = new Rect();
+        private Rect _globalDesktopBounds = new Rect();
         private bool _autoStartClientMode = false;
         private string _autoServerIP = "";
         
@@ -405,7 +412,7 @@ namespace SharpKVM
 
         public MainWindow()
         {
-            this.Title = "SharpKVM (v7.1)";
+            this.Title = "SharpKVM (v7.4)";
             this.Width = 1000;
             this.Height = 750;
             this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -419,6 +426,7 @@ namespace SharpKVM
             _cmbLayoutMode.SelectedIndex = _layoutMode == LayoutMode.Free ? 1 : 0;
             
             this.Opened += OnWindowOpened;
+            this.SizeChanged += (s, e) => DrawVisualLayout();
             this.Closing += (s, e) => { StopServer(); StopClient(); CursorManager.Show(); CursorManager.Unlock(); SaveConfig(); };
 
             _clipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2000) }; 
@@ -599,9 +607,12 @@ namespace SharpKVM
                                 IsSnapped = bool.Parse(parts[9]),
                                 SnapAnchorID = parts[10]
                             };
-                            if (parts.Length >= 12) config.SnapAnchorID = parts[10];
-                            if (parts.Length >= 13) {
-                                // Reserved for future compatibility: anchor screen and edge are optional.
+                            if (parts.Length >= 15)
+                            {
+                                config.DesktopX = double.Parse(parts[11]);
+                                config.DesktopY = double.Parse(parts[12]);
+                                config.DesktopWidth = double.Parse(parts[13]);
+                                config.DesktopHeight = double.Parse(parts[14]);
                             }
                             
                             _clientConfigs[config.IP] = config;
@@ -635,6 +646,10 @@ namespace SharpKVM
                         cfg.Y = layout.StageRect.Y;
                         cfg.Width = layout.StageRect.Width;
                         cfg.Height = layout.StageRect.Height;
+                        cfg.DesktopX = layout.DesktopRect.X;
+                        cfg.DesktopY = layout.DesktopRect.Y;
+                        cfg.DesktopWidth = layout.DesktopRect.Width;
+                        cfg.DesktopHeight = layout.DesktopRect.Height;
                         cfg.IsPlaced = true;
                         cfg.IsSnapped = layout.IsSnapped;
                         cfg.SnapAnchorID = layout.SnapAnchorID;
@@ -643,6 +658,10 @@ namespace SharpKVM
                         cfg.Y = -1;
                         cfg.Width = -1;
                         cfg.Height = -1;
+                        cfg.DesktopX = -1;
+                        cfg.DesktopY = -1;
+                        cfg.DesktopWidth = -1;
+                        cfg.DesktopHeight = -1;
                         cfg.IsPlaced = false;
                         cfg.IsSnapped = false;
                         cfg.SnapAnchorID = "";
@@ -650,7 +669,7 @@ namespace SharpKVM
                 }
                 
                 foreach(var cfg in _clientConfigs.Values) {
-                    lines.Add($"{cfg.IP}|{cfg.Sensitivity}|{cfg.WheelSensitivity}|{cfg.LayoutMode}|{cfg.X}|{cfg.Y}|{cfg.Width}|{cfg.Height}|{cfg.IsPlaced}|{cfg.IsSnapped}|{cfg.SnapAnchorID}");
+                    lines.Add($"{cfg.IP}|{cfg.Sensitivity}|{cfg.WheelSensitivity}|{cfg.LayoutMode}|{cfg.X}|{cfg.Y}|{cfg.Width}|{cfg.Height}|{cfg.IsPlaced}|{cfg.IsSnapped}|{cfg.SnapAnchorID}|{cfg.DesktopX}|{cfg.DesktopY}|{cfg.DesktopWidth}|{cfg.DesktopHeight}");
                 }
                 File.WriteAllLines(path, lines);
             } catch { }
@@ -924,14 +943,61 @@ namespace SharpKVM
 
         private void DrawVisualLayout() {
             if(_pnlStage == null) return;
-            _pnlStage.Children.Clear(); _snapSlots.Clear();
-            double minX = _cachedScreens.Min(s => s.Bounds.X), minY = _cachedScreens.Min(s => s.Bounds.Y);
-            double totalW = _cachedScreens.Max(s => s.Bounds.Right) - minX, totalH = _cachedScreens.Max(s => s.Bounds.Bottom) - minY;
+            RecalculateViewport(includePlacedClients: true);
+
+            _pnlStage.Children.Clear();
+            _snapSlots.Clear();
+
+            double thickness = 20;
+            foreach(var s in _cachedScreens) {
+                var uiRect = DesktopToStage(s.Bounds);
+                double x = uiRect.X;
+                double y = uiRect.Y;
+                double w = uiRect.Width;
+                double h = uiRect.Height;
+                s.UIBounds = uiRect;
+                var border = new Border { Width = w, Height = h, Background = Brushes.SteelBlue, BorderBrush = Brushes.White, BorderThickness = new Thickness(2), Child = new TextBlock { Text = $"{s.ID}\n{s.Bounds.Width}x{s.Bounds.Height}", Foreground=Brushes.White, HorizontalAlignment=HorizontalAlignment.Center, VerticalAlignment=VerticalAlignment.Center, FontSize=10 } };
+                Canvas.SetLeft(border, x); Canvas.SetTop(border, y);
+                _pnlStage.Children.Add(border);
+                _snapSlots.Add(new SnapSlot(s.ID + "_Left", new Rect(x - thickness, y, thickness, h), s.ID, "Left"));
+                _snapSlots.Add(new SnapSlot(s.ID + "_Right", new Rect(x + w, y, thickness, h), s.ID, "Right"));
+                _snapSlots.Add(new SnapSlot(s.ID + "_Top", new Rect(x, y - thickness, w, thickness), s.ID, "Top"));
+                _snapSlots.Add(new SnapSlot(s.ID + "_Bottom", new Rect(x, y + h, w, thickness), s.ID, "Bottom"));
+            }
+
+            RedrawClientBoxes();
+        }
+
+        private void RecalculateViewport(bool includePlacedClients)
+        {
+            if (_pnlStage == null || _cachedScreens.Count == 0) return;
+
+            double minX = _cachedScreens.Min(s => s.Bounds.X);
+            double minY = _cachedScreens.Min(s => s.Bounds.Y);
+            double maxX = _cachedScreens.Max(s => s.Bounds.Right);
+            double maxY = _cachedScreens.Max(s => s.Bounds.Bottom);
+
+            _globalDesktopBounds = new Rect(minX, minY, maxX - minX, maxY - minY);
+
+            if (includePlacedClients)
+            {
+                foreach (var layout in _clientLayouts.Values)
+                {
+                    if (!layout.IsPlaced || layout.DesktopRect.Width <= 0 || layout.DesktopRect.Height <= 0) continue;
+                    minX = Math.Min(minX, layout.DesktopRect.Left);
+                    minY = Math.Min(minY, layout.DesktopRect.Top);
+                    maxX = Math.Max(maxX, layout.DesktopRect.Right);
+                    maxY = Math.Max(maxY, layout.DesktopRect.Bottom);
+                }
+            }
+
+            double totalW = Math.Max(1, maxX - minX);
+            double totalH = Math.Max(1, maxY - minY);
             double stageW = _pnlStage.Bounds.Width, stageH = _pnlStage.Bounds.Height;
             if(stageW <= 0) return;
             double padding = 40;
             double scale = Math.Min((stageW - padding*2)/totalW, (stageH - padding*2)/totalH);
-            if(scale > 0.3) scale = 0.3;
+            if (double.IsNaN(scale) || double.IsInfinity(scale) || scale <= 0) scale = 0.01;
             double offsetX = (stageW - totalW*scale)/2, offsetY = (stageH - totalH*scale)/2;
 
             _layoutMinX = minX;
@@ -939,21 +1005,18 @@ namespace SharpKVM
             _layoutScale = scale;
             _layoutOffsetX = offsetX;
             _layoutOffsetY = offsetY;
+            _globalStageBounds = DesktopToStage(_globalDesktopBounds);
+        }
 
-            foreach(var s in _cachedScreens) {
-                double x = (s.Bounds.X - minX) * scale + offsetX, y = (s.Bounds.Y - minY) * scale + offsetY;
-                double w = s.Bounds.Width * scale, h = s.Bounds.Height * scale;
-                s.UIBounds = new Rect(x, y, w, h);
-                var border = new Border { Width = w, Height = h, Background = Brushes.SteelBlue, BorderBrush = Brushes.White, BorderThickness = new Thickness(2), Child = new TextBlock { Text = $"{s.ID}\n{s.Bounds.Width}x{s.Bounds.Height}", Foreground=Brushes.White, HorizontalAlignment=HorizontalAlignment.Center, VerticalAlignment=VerticalAlignment.Center, FontSize=10 } };
-                Canvas.SetLeft(border, x); Canvas.SetTop(border, y);
-                _pnlStage.Children.Add(border);
-                _snapSlots.Add(new SnapSlot(s.ID + "_Left", new Rect(x - 20, y, 20, h), s.ID, "Left"));
-                _snapSlots.Add(new SnapSlot(s.ID + "_Right", new Rect(x + w, y, 20, h), s.ID, "Right"));
-                _snapSlots.Add(new SnapSlot(s.ID + "_Top", new Rect(x, y - 20, w, 20), s.ID, "Top"));
-                _snapSlots.Add(new SnapSlot(s.ID + "_Bottom", new Rect(x, y + h, w, 20), s.ID, "Bottom"));
-            }
-
-            ApplyLayoutModeToPlacedClients();
+        private Rect DesktopToStage(Rect desktopRect)
+        {
+            if (_layoutScale <= 0) return new Rect();
+            return new Rect(
+                (desktopRect.X - _layoutMinX) * _layoutScale + _layoutOffsetX,
+                (desktopRect.Y - _layoutMinY) * _layoutScale + _layoutOffsetY,
+                desktopRect.Width * _layoutScale,
+                desktopRect.Height * _layoutScale
+            );
         }
 
         private void RedrawClientBoxes()
@@ -987,11 +1050,17 @@ namespace SharpKVM
                     _pnlStage.Children.Add(box);
                 }
 
+                var stageRect = layout.DesktopRect.Width > 0 && layout.DesktopRect.Height > 0
+                    ? DesktopToStage(layout.DesktopRect)
+                    : layout.StageRect;
+                layout.StageRect = stageRect;
+                _clientLayouts[clientKey] = layout;
+
                 box.Margin = new Thickness(0);
-                box.Width = layout.StageRect.Width;
-                box.Height = layout.StageRect.Height;
-                Canvas.SetLeft(box, layout.StageRect.X);
-                Canvas.SetTop(box, layout.StageRect.Y);
+                box.Width = stageRect.Width;
+                box.Height = stageRect.Height;
+                Canvas.SetLeft(box, stageRect.X);
+                Canvas.SetTop(box, stageRect.Y);
                 box.Background = Brushes.Green;
             }
         }
@@ -1039,14 +1108,27 @@ namespace SharpKVM
             return new Rect(x, y, rect.Width, rect.Height);
         }
 
-        private double GetStageOverflow(Rect rect)
+        private Rect ClampRectByAnchor(Rect rect, EdgeDirection anchorEdge)
         {
-            double overflow = 0;
-            if (rect.Left < 0) overflow += -rect.Left;
-            if (rect.Top < 0) overflow += -rect.Top;
-            if (rect.Right > _pnlStage.Bounds.Width) overflow += rect.Right - _pnlStage.Bounds.Width;
-            if (rect.Bottom > _pnlStage.Bounds.Height) overflow += rect.Bottom - _pnlStage.Bounds.Height;
-            return overflow;
+            if (anchorEdge == EdgeDirection.Left || anchorEdge == EdgeDirection.Right)
+            {
+                double y = Math.Clamp(rect.Y, _globalDesktopBounds.Top, Math.Max(_globalDesktopBounds.Top, _globalDesktopBounds.Bottom - rect.Height));
+                return new Rect(rect.X, y, rect.Width, rect.Height);
+            }
+
+            if (anchorEdge == EdgeDirection.Top || anchorEdge == EdgeDirection.Bottom)
+            {
+                double x = Math.Clamp(rect.X, _globalDesktopBounds.Left, Math.Max(_globalDesktopBounds.Left, _globalDesktopBounds.Right - rect.Width));
+                return new Rect(x, rect.Y, rect.Width, rect.Height);
+            }
+
+            return rect;
+        }
+
+        private double GetDesktopSnapThreshold()
+        {
+            double scale = Math.Max(0.0001, _layoutScale);
+            return Math.Max(8, 14 / scale);
         }
 
         private bool IsHorizontalEdge(EdgeDirection edge) => edge == EdgeDirection.Left || edge == EdgeDirection.Right;
@@ -1061,6 +1143,16 @@ namespace SharpKVM
             {
                 return Overlap1D(sourceRect.Left, sourceRect.Right, targetRect.Left, targetRect.Right) > 8;
             }
+            return false;
+        }
+
+        private bool IsGlobalOuterEdgeDesktop(ScreenInfo screen, EdgeDirection edge)
+        {
+            const double tol = 1.0;
+            if (edge == EdgeDirection.Left) return Math.Abs(screen.Bounds.Left - _globalDesktopBounds.Left) <= tol;
+            if (edge == EdgeDirection.Right) return Math.Abs(screen.Bounds.Right - _globalDesktopBounds.Right) <= tol;
+            if (edge == EdgeDirection.Top) return Math.Abs(screen.Bounds.Top - _globalDesktopBounds.Top) <= tol;
+            if (edge == EdgeDirection.Bottom) return Math.Abs(screen.Bounds.Bottom - _globalDesktopBounds.Bottom) <= tol;
             return false;
         }
 
@@ -1134,7 +1226,7 @@ namespace SharpKVM
 
         private Rect AttachToScreenEdge(Rect rect, ScreenInfo screen, EdgeDirection edge)
         {
-            Rect screenRect = screen.UIBounds;
+            Rect screenRect = screen.Bounds;
 
             if (edge == EdgeDirection.Left)
             {
@@ -1156,7 +1248,7 @@ namespace SharpKVM
                 double x = Math.Clamp(rect.X, screenRect.Left - rect.Width + 8, screenRect.Right - 8);
                 return new Rect(x, screenRect.Bottom, rect.Width, rect.Height);
             }
-            return ClampRectToStage(rect);
+            return rect;
         }
 
         private (ScreenInfo Screen, EdgeDirection Edge, double Distance) FindNearestScreenEdge(Rect rect)
@@ -1168,13 +1260,16 @@ namespace SharpKVM
 
             foreach (var screen in _cachedScreens)
             {
-                Rect r = screen.UIBounds;
-                var candidates = new (EdgeDirection Edge, Point P)[] {
-                    (EdgeDirection.Left, new Point(r.Left, Math.Clamp(center.Y, r.Top, r.Bottom))),
-                    (EdgeDirection.Right, new Point(r.Right, Math.Clamp(center.Y, r.Top, r.Bottom))),
-                    (EdgeDirection.Top, new Point(Math.Clamp(center.X, r.Left, r.Right), r.Top)),
-                    (EdgeDirection.Bottom, new Point(Math.Clamp(center.X, r.Left, r.Right), r.Bottom))
-                };
+                Rect r = screen.Bounds;
+                var candidates = new List<(EdgeDirection Edge, Point P)>();
+                if (IsGlobalOuterEdgeDesktop(screen, EdgeDirection.Left))
+                    candidates.Add((EdgeDirection.Left, new Point(r.Left, Math.Clamp(center.Y, r.Top, r.Bottom))));
+                if (IsGlobalOuterEdgeDesktop(screen, EdgeDirection.Right))
+                    candidates.Add((EdgeDirection.Right, new Point(r.Right, Math.Clamp(center.Y, r.Top, r.Bottom))));
+                if (IsGlobalOuterEdgeDesktop(screen, EdgeDirection.Top))
+                    candidates.Add((EdgeDirection.Top, new Point(Math.Clamp(center.X, r.Left, r.Right), r.Top)));
+                if (IsGlobalOuterEdgeDesktop(screen, EdgeDirection.Bottom))
+                    candidates.Add((EdgeDirection.Bottom, new Point(Math.Clamp(center.X, r.Left, r.Right), r.Bottom)));
 
                 foreach (var c in candidates)
                 {
@@ -1197,38 +1292,18 @@ namespace SharpKVM
             anchorEdge = EdgeDirection.None;
 
             var nearest = FindNearestScreenEdge(rect);
-            Rect bestRect = ClampRectToStage(rect);
-            double bestScore = double.MaxValue;
-
-            foreach (var screen in _cachedScreens)
+            var bestRect = AttachToScreenEdge(rect, nearest.Screen, nearest.Edge);
+            anchorScreenID = nearest.Screen.ID;
+            anchorEdge = nearest.Edge switch
             {
-                foreach (var edge in new[] { EdgeDirection.Left, EdgeDirection.Right, EdgeDirection.Top, EdgeDirection.Bottom })
-                {
-                    var attached = AttachToScreenEdge(rect, screen, edge);
-                    double overflow = GetStageOverflow(attached);
+                EdgeDirection.Left => EdgeDirection.Right,
+                EdgeDirection.Right => EdgeDirection.Left,
+                EdgeDirection.Top => EdgeDirection.Bottom,
+                EdgeDirection.Bottom => EdgeDirection.Top,
+                _ => EdgeDirection.None
+            };
 
-                    double edgeBias = 0;
-                    if (screen.ID == nearest.Screen.ID && edge == nearest.Edge) edgeBias = -500;
-
-                    double score = (overflow * 10000) + edgeBias;
-                    if (score < bestScore)
-                    {
-                        bestScore = score;
-                        bestRect = attached;
-                        anchorScreenID = screen.ID;
-                        anchorEdge = edge switch
-                        {
-                            EdgeDirection.Left => EdgeDirection.Right,
-                            EdgeDirection.Right => EdgeDirection.Left,
-                            EdgeDirection.Top => EdgeDirection.Bottom,
-                            EdgeDirection.Bottom => EdgeDirection.Top,
-                            _ => EdgeDirection.None
-                        };
-                    }
-                }
-            }
-
-            var magnetic = ApplyMagneticSnap(bestRect, clientKey);
+            var magnetic = ApplyMagneticSnap(ClampRectByAnchor(bestRect, anchorEdge), clientKey, GetDesktopSnapThreshold());
             if (anchorEdge == EdgeDirection.Left || anchorEdge == EdgeDirection.Right)
             {
                 magnetic = new Rect(bestRect.X, magnetic.Y, magnetic.Width, magnetic.Height);
@@ -1237,33 +1312,19 @@ namespace SharpKVM
             {
                 magnetic = new Rect(magnetic.X, bestRect.Y, magnetic.Width, magnetic.Height);
             }
-            return ClampRectToStage(magnetic);
+            return ClampRectByAnchor(magnetic, anchorEdge);
         }
 
         private Rect ApplyMagneticSnap(Rect rect, string movingClientKey, double threshold = 14)
         {
-            var targets = new List<Rect>();
-            targets.AddRange(_cachedScreens.Select(s => s.UIBounds));
-            foreach (var kv in _clientLayouts)
-            {
-                if (kv.Key == movingClientKey || !kv.Value.IsPlaced) continue;
-                targets.Add(kv.Value.StageRect);
-            }
-
             double x = rect.X;
             double y = rect.Y;
             double bestDx = threshold + 1;
             double bestDy = threshold + 1;
 
-            foreach (var t in targets)
             {
-                var xCandidates = new[]
-                {
-                    t.Left,
-                    t.Right - rect.Width,
-                    t.Left - rect.Width,
-                    t.Right
-                };
+                var t = _globalDesktopBounds;
+                var xCandidates = new[] { t.Left, t.Right - rect.Width, t.Left - rect.Width, t.Right };
 
                 foreach (var cx in xCandidates)
                 {
@@ -1275,13 +1336,7 @@ namespace SharpKVM
                     }
                 }
 
-                var yCandidates = new[]
-                {
-                    t.Top,
-                    t.Bottom - rect.Height,
-                    t.Top - rect.Height,
-                    t.Bottom
-                };
+                var yCandidates = new[] { t.Top, t.Bottom - rect.Height, t.Top - rect.Height, t.Bottom };
 
                 foreach (var cy in yCandidates)
                 {
@@ -1294,7 +1349,37 @@ namespace SharpKVM
                 }
             }
 
-            return ClampRectToStage(new Rect(x, y, rect.Width, rect.Height));
+            foreach (var kv in _clientLayouts)
+            {
+                if (kv.Key == movingClientKey || !kv.Value.IsPlaced) continue;
+                var t = kv.Value.DesktopRect.Width > 0 && kv.Value.DesktopRect.Height > 0
+                    ? kv.Value.DesktopRect
+                    : StageToDesktop(kv.Value.StageRect);
+
+                var xCandidates = new[] { t.Left, t.Right - rect.Width, t.Left - rect.Width, t.Right };
+                foreach (var cx in xCandidates)
+                {
+                    double dx = Math.Abs(cx - x);
+                    if (dx < bestDx && dx <= threshold)
+                    {
+                        bestDx = dx;
+                        x = cx;
+                    }
+                }
+
+                var yCandidates = new[] { t.Top, t.Bottom - rect.Height, t.Top - rect.Height, t.Bottom };
+                foreach (var cy in yCandidates)
+                {
+                    double dy = Math.Abs(cy - y);
+                    if (dy < bestDy && dy <= threshold)
+                    {
+                        bestDy = dy;
+                        y = cy;
+                    }
+                }
+            }
+
+            return new Rect(x, y, rect.Width, rect.Height);
         }
 
         private Rect GetSnapRect(SnapSlot slot, double ratio)
@@ -1331,15 +1416,17 @@ namespace SharpKVM
 
                 if (_layoutMode == LayoutMode.Free)
                 {
-                    var natural = GetNaturalStageSize(client);
-                    var current = layout.StageRect;
+                    var current = layout.DesktopRect.Width > 0 && layout.DesktopRect.Height > 0
+                        ? layout.DesktopRect
+                        : StageToDesktop(layout.StageRect);
                     var centered = new Rect(
-                        current.Center.X - (natural.Width / 2),
-                        current.Center.Y - (natural.Height / 2),
-                        natural.Width,
-                        natural.Height
+                        current.Center.X - (client.Width / 2.0),
+                        current.Center.Y - (client.Height / 2.0),
+                        Math.Max(1, client.Width),
+                        Math.Max(1, client.Height)
                     );
-                    layout.StageRect = GetAnchoredFreeRect(centered, key, out var anchorScreenID, out var anchorEdge);
+                    layout.DesktopRect = GetAnchoredFreeRect(centered, key, out var anchorScreenID, out var anchorEdge);
+                    layout.StageRect = DesktopToStage(layout.DesktopRect);
                     layout.IsSnapped = false;
                     layout.SnapAnchorID = "";
                     layout.AnchorScreenID = anchorScreenID;
@@ -1364,7 +1451,9 @@ namespace SharpKVM
 
                     if (slot != null)
                     {
-                        layout.StageRect = GetSnapRect(slot, (double)client.Width / client.Height);
+                        var snapDesktop = StageToDesktop(GetSnapRect(slot, (double)client.Width / client.Height));
+                        layout.DesktopRect = snapDesktop;
+                        layout.StageRect = DesktopToStage(snapDesktop);
                         layout.IsSnapped = true;
                         layout.SnapAnchorID = slot.ID;
                         layout.AnchorScreenID = slot.ParentID;
@@ -1382,7 +1471,7 @@ namespace SharpKVM
                 _clientLayouts[key] = layout;
             }
 
-            RedrawClientBoxes();
+            DrawVisualLayout();
         }
 
         private double GetDistanceToRect(Point pt, Rect rect) {
@@ -1488,6 +1577,7 @@ namespace SharpKVM
                     if(_layoutMode == LayoutMode.Snap && bestMatch != null) {
                         var slot = bestMatch.Slot;
                         var snappedRect = GetSnapRect(slot, ratio);
+                        var snappedDesktop = StageToDesktop(snappedRect);
                         box.Width = snappedRect.Width;
                         box.Height = snappedRect.Height;
                         Canvas.SetLeft(box, snappedRect.X);
@@ -1498,6 +1588,7 @@ namespace SharpKVM
                         {
                             ClientKey = clientKey,
                             StageRect = snappedRect,
+                            DesktopRect = snappedDesktop,
                             IsPlaced = true,
                             IsSnapped = true,
                             SnapAnchorID = slot.ID,
@@ -1511,6 +1602,7 @@ namespace SharpKVM
                                 _ => EdgeDirection.None
                             }
                         };
+                        DrawVisualLayout();
                         Log($"Mapped {client.Name} to {slot.ID}");
                         SaveClientConfigs();
                     } else {
@@ -1521,24 +1613,27 @@ namespace SharpKVM
                             if (double.IsNaN(left)) left = 0;
                             if (double.IsNaN(top)) top = 0;
 
-                            var freeRect = ClampRectToStage(new Rect(left, top, box.Width, box.Height));
-                            freeRect = GetAnchoredFreeRect(freeRect, clientKey, out var anchorScreenID, out var anchorEdge);
-                            Canvas.SetLeft(box, freeRect.X);
-                            Canvas.SetTop(box, freeRect.Y);
-                            box.Width = freeRect.Width;
-                            box.Height = freeRect.Height;
+                            var desktopRect = StageToDesktop(new Rect(left, top, box.Width, box.Height));
+                            var freeRect = GetAnchoredFreeRect(desktopRect, clientKey, out var anchorScreenID, out var anchorEdge);
+                            var freeStageRect = DesktopToStage(freeRect);
+                            Canvas.SetLeft(box, freeStageRect.X);
+                            Canvas.SetTop(box, freeStageRect.Y);
+                            box.Width = freeStageRect.Width;
+                            box.Height = freeStageRect.Height;
                             box.Background = Brushes.Green;
 
                             _clientLayouts[clientKey] = new ClientLayout
                             {
                                 ClientKey = clientKey,
-                                StageRect = freeRect,
+                                StageRect = freeStageRect,
+                                DesktopRect = freeRect,
                                 IsPlaced = true,
                                 IsSnapped = false,
                                 SnapAnchorID = "",
                                 AnchorScreenID = anchorScreenID,
                                 AnchorEdge = anchorEdge
                             };
+                            DrawVisualLayout();
                             SaveClientConfigs();
                         }
                         else
@@ -1548,6 +1643,7 @@ namespace SharpKVM
                             box.Margin = new Thickness(5);
                             box.Background = Brushes.Orange;
                             if (_clientLayouts.ContainsKey(clientKey)) _clientLayouts.Remove(clientKey);
+                            DrawVisualLayout();
                             SaveClientConfigs();
                         }
                     }
@@ -1563,10 +1659,14 @@ namespace SharpKVM
                 wheelSlider.Value = config.WheelSensitivity;
 
                 if (config.IsPlaced && config.Width > 0 && config.Height > 0) {
+                    Rect desktopRect = (config.DesktopWidth > 0 && config.DesktopHeight > 0)
+                        ? new Rect(config.DesktopX, config.DesktopY, config.DesktopWidth, config.DesktopHeight)
+                        : StageToDesktop(new Rect(config.X, config.Y, config.Width, config.Height));
                     _clientLayouts[ip] = new ClientLayout
                     {
                         ClientKey = ip,
-                        StageRect = new Rect(config.X, config.Y, config.Width, config.Height),
+                        DesktopRect = desktopRect,
+                        StageRect = DesktopToStage(desktopRect),
                         IsPlaced = true,
                         IsSnapped = config.IsSnapped,
                         SnapAnchorID = config.SnapAnchorID ?? ""
@@ -1733,6 +1833,7 @@ namespace SharpKVM
                                 }
                                 if (_clientLayouts.ContainsKey(key)) _clientLayouts.Remove(key);
                                 if (_activeRemoteClient == ch) { _isRemoteActive = false; _activeRemoteClient = null; CursorManager.Unlock(); CursorManager.Show(); }
+                                DrawVisualLayout();
                             });
                         }
                     };
@@ -1860,8 +1961,14 @@ namespace SharpKVM
                 var candidate = GetClientByKey(layout.ClientKey);
                 if (candidate == null) continue;
                 var expectedEntryEdge = layout.AnchorEdge != EdgeDirection.None ? layout.AnchorEdge : OppositeEdge(localExitEdge);
+                if (localExitEdge != OppositeEdge(expectedEntryEdge)) continue;
+                if (!string.IsNullOrEmpty(layout.AnchorScreenID) &&
+                    (expectedEntryEdge == EdgeDirection.Left || expectedEntryEdge == EdgeDirection.Right) &&
+                    layout.AnchorScreenID != rootScreen.ID) continue;
 
-                var desktopRect = StageToDesktop(layout.StageRect);
+                var desktopRect = layout.DesktopRect.Width > 0 && layout.DesktopRect.Height > 0
+                    ? layout.DesktopRect
+                    : StageToDesktop(layout.StageRect);
                 if (desktopRect.Width <= 0 || desktopRect.Height <= 0) continue;
                 if (!HasPerpendicularOverlapForEntry(sourceRect, desktopRect, expectedEntryEdge)) continue;
 
@@ -1892,7 +1999,9 @@ namespace SharpKVM
             string activeKey = GetClientKey(_activeRemoteClient);
             if (!_clientLayouts.TryGetValue(activeKey, out var activeLayout) || !activeLayout.IsPlaced) return false;
 
-            Rect activeRect = StageToDesktop(activeLayout.StageRect);
+            Rect activeRect = activeLayout.DesktopRect.Width > 0 && activeLayout.DesktopRect.Height > 0
+                ? activeLayout.DesktopRect
+                : StageToDesktop(activeLayout.StageRect);
             if (activeRect.Width <= 0 || activeRect.Height <= 0) return false;
 
             double clientW = _activeRemoteClient.Width > 0 ? _activeRemoteClient.Width : 1920;
@@ -1917,7 +2026,9 @@ namespace SharpKVM
                 if (candidate == null) continue;
                 var expectedEntryEdge = layout.AnchorEdge != EdgeDirection.None ? layout.AnchorEdge : OppositeEdge(exitEdge);
 
-                var desktopRect = StageToDesktop(layout.StageRect);
+                var desktopRect = layout.DesktopRect.Width > 0 && layout.DesktopRect.Height > 0
+                    ? layout.DesktopRect
+                    : StageToDesktop(layout.StageRect);
                 if (desktopRect.Width <= 0 || desktopRect.Height <= 0) continue;
                 if (!HasPerpendicularOverlapForEntry(activeRect, desktopRect, expectedEntryEdge)) continue;
 
@@ -2042,6 +2153,10 @@ namespace SharpKVM
                 if (currentScreen == null) currentScreen = _cachedScreens.OrderBy(scr => Math.Pow(x - scr.Bounds.Center.X, 2) + Math.Pow(y - scr.Bounds.Center.Y, 2)).FirstOrDefault();
                 if (currentScreen != null && TryGetEdgeAtLocalScreen(currentScreen, x, y, out var exitEdge))
                 {
+                    if (!IsGlobalOuterEdgeDesktop(currentScreen, exitEdge))
+                    {
+                        return;
+                    }
                     var cursorPoint = new Point(x, y);
                     if (TryFindAttachTarget(currentScreen, exitEdge, cursorPoint, out var targetClient, out var targetDesktopRect, out var targetEdgePoint, out var targetEntryEdge))
                     {
