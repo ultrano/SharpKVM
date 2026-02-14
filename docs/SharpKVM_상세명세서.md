@@ -68,6 +68,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 #### Server 탭
 - `Start Server` / `Stop Server` 토글 버튼
 - (Debug 빌드 전용) `Add Virtual Client` 버튼: 루프백(`127.0.0.1`) 가상 클라이언트 1대 연결
+- (Debug 빌드 전용) `Virtual Resolution` 콤보박스: 프리셋 해상도 선택
 - 서버 상태/주소 Text (`IP: <addr> / Port: 11000`)
 - `Layout` 콤보박스: `Snap`, `Free`
 - 배치 편집 영역:
@@ -144,6 +145,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 - 목적: 실장치 없이 서버 모드 동작 테스트
 - 활성 조건: Debug 빌드에서만 버튼 노출
 - 연결 방식: `TcpClient` 루프백 연결 후 `Hello`/`PlatformInfo` 패킷 전송
+- 해상도: 프리셋 콤보박스 선택값 사용 (기본 `1920x1080`, 세션 동안 유지)
 - 제한: 1대만 동시 실행 가능 (중복 시작 방지)
 - 서버 종료 시 가상 클라이언트도 함께 종료
 

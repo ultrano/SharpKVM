@@ -18,4 +18,14 @@ public class VirtualClientHostTests
         Assert.Equal(PacketType.PlatformInfo, packets[1].Type);
         Assert.Equal(0, packets[1].KeyCode);
     }
+
+    [Fact]
+    public void CreateHandshakePackets_UsesRequestedResolution()
+    {
+        var packets = VirtualClientHost.CreateHandshakePackets(2560, 1440, false);
+
+        Assert.Equal(PacketType.Hello, packets[0].Type);
+        Assert.Equal(2560, packets[0].X);
+        Assert.Equal(1440, packets[0].Y);
+    }
 }

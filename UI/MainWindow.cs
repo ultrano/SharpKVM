@@ -49,7 +49,10 @@ namespace SharpKVM
         private ComboBox _cmbLayoutMode = null!;
 #if DEBUG
         private Button? _btnAddVirtualClient;
+        private ComboBox? _cmbVirtualResolution;
         private VirtualClientHost? _virtualClientHost;
+        private int _selectedVirtualWidth = 1920;
+        private int _selectedVirtualHeight = 1080;
 #endif
 
         private TcpListener? _serverListener;
@@ -175,6 +178,11 @@ namespace SharpKVM
 #if DEBUG
             _btnAddVirtualClient = new Button { Content = "Add Virtual Client" };
             _btnAddVirtualClient.Click += OnAddVirtualClientClicked;
+            _cmbVirtualResolution = new ComboBox
+            {
+                Width = 140
+            };
+            _cmbVirtualResolution.SelectionChanged += OnVirtualResolutionChanged;
 #endif
             _cmbLayoutMode = new ComboBox
             {
@@ -192,6 +200,8 @@ namespace SharpKVM
             srvHeader.Children.Add(_btnStartServer);
 #if DEBUG
             srvHeader.Children.Add(_btnAddVirtualClient);
+            srvHeader.Children.Add(new TextBlock { Text = "Virtual Resolution", VerticalAlignment = VerticalAlignment.Center });
+            srvHeader.Children.Add(_cmbVirtualResolution);
 #endif
             srvHeader.Children.Add(_lblServerInfo);
             srvHeader.Children.Add(new TextBlock { Text = "Layout", VerticalAlignment = VerticalAlignment.Center });
@@ -209,6 +219,10 @@ namespace SharpKVM
             editorBorder.Child = editorGrid;
             Grid.SetRow(editorBorder, 1);
             serverGrid.Children.Add(editorBorder);
+
+#if DEBUG
+            InitializeVirtualResolutionPresets();
+#endif
 
             serverTab.Content = serverGrid;
 
@@ -704,7 +718,8 @@ namespace SharpKVM
             {
                 magnetic = new Rect(magnetic.X, bestRect.Y, magnetic.Width, magnetic.Height);
             }
-            return ClampRectByAnchor(magnetic, anchorEdge);
+            var resolved = ResolveFreeOverlap(ClampRectByAnchor(magnetic, anchorEdge), clientKey, anchorEdge);
+            return ClampRectByAnchor(resolved, anchorEdge);
         }
 
         private Rect ApplyMagneticSnap(Rect rect, string movingClientKey, double threshold = 14)
@@ -772,6 +787,71 @@ namespace SharpKVM
             }
 
             return new Rect(x, y, rect.Width, rect.Height);
+        }
+
+        private static bool RectsOverlap(Rect a, Rect b, double gap = 0)
+        {
+            return a.Left < b.Right + gap &&
+                   a.Right > b.Left - gap &&
+                   a.Top < b.Bottom + gap &&
+                   a.Bottom > b.Top - gap;
+        }
+
+        private Rect ResolveFreeOverlap(Rect rect, string movingClientKey, EdgeDirection anchorEdge, double gap = 6)
+        {
+            var candidate = rect;
+
+            for (int i = 0; i < 40; i++)
+            {
+                Rect? overlapped = null;
+                foreach (var kv in _clientLayouts)
+                {
+                    if (kv.Key == movingClientKey || !kv.Value.IsPlaced) continue;
+                    var other = kv.Value.DesktopRect.Width > 0 && kv.Value.DesktopRect.Height > 0
+                        ? kv.Value.DesktopRect
+                        : StageToDesktop(kv.Value.StageRect);
+
+                    if (RectsOverlap(candidate, other, -gap))
+                    {
+                        overlapped = other;
+                        break;
+                    }
+                }
+
+                if (overlapped == null) return candidate;
+
+                var t = overlapped.Value;
+                double moveLeft = (t.Left - gap) - candidate.Right;
+                double moveRight = (t.Right + gap) - candidate.Left;
+                double moveUp = (t.Top - gap) - candidate.Bottom;
+                double moveDown = (t.Bottom + gap) - candidate.Top;
+
+                if (anchorEdge == EdgeDirection.Left || anchorEdge == EdgeDirection.Right)
+                {
+                    // Preserve anchored X, move only on Y.
+                    candidate = Math.Abs(moveUp) <= Math.Abs(moveDown)
+                        ? candidate.WithY(candidate.Y + moveUp)
+                        : candidate.WithY(candidate.Y + moveDown);
+                }
+                else if (anchorEdge == EdgeDirection.Top || anchorEdge == EdgeDirection.Bottom)
+                {
+                    // Preserve anchored Y, move only on X.
+                    candidate = Math.Abs(moveLeft) <= Math.Abs(moveRight)
+                        ? candidate.WithX(candidate.X + moveLeft)
+                        : candidate.WithX(candidate.X + moveRight);
+                }
+                else
+                {
+                    var options = new[] { moveLeft, moveRight, moveUp, moveDown };
+                    double best = options.OrderBy(Math.Abs).First();
+                    if (best == moveLeft || best == moveRight) candidate = candidate.WithX(candidate.X + best);
+                    else candidate = candidate.WithY(candidate.Y + best);
+                }
+
+                candidate = ClampRectByAnchor(candidate, anchorEdge);
+            }
+
+            return candidate;
         }
 
         private Rect GetSnapRect(SnapSlot slot, double ratio)
