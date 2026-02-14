@@ -189,9 +189,11 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 - 원격 활성 시 `KeyDown/KeyUp` 패킷 전송
 - 원격이 macOS인 경우 modifier 매핑 보정:
 - `Meta ↔ Alt` 교환
+- `Hangul` 키 입력은 macOS `CapsLock`으로 매핑
 
 ### 9.5 마우스 버튼/휠
 - MouseDown/Up 시 clickCount 포함(더블클릭 감지)
+- macOS Raw 이벤트 전송 시 `Button4/5`(앞/뒤 버튼)는 OtherButton 계열로 전송
 - 휠은 누산기(`_wheelAccumulator`) 기반 정수 delta 생성 후 전송
 
 ## 10. 레이아웃 명세
@@ -249,6 +251,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 ### 12.2 macOS
 - CoreGraphics 기반 Raw 이벤트:
 - 클릭(`SendMacRawClick`), 이동(`SendMacRawMove`), 드래그(`SendMacRawDrag`)
+- 클릭/드래그의 OtherButton 경로는 `Button3+`(예: Windows `Button4/5`)를 포함
 - 커서 hide/show/warp
 - `Ctrl + 방향키` 기반 Mission Control 스크립트 트리거 지원
 

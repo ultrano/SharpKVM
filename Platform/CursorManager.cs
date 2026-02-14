@@ -67,12 +67,7 @@ namespace SharpKVM
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
             try {
-                uint type = 0;
-                if (button == 0) type = isDown ? 1u : 2u; // Left MouseDown = 1, MouseUp = 2
-                else if (button == 1) type = isDown ? 3u : 4u; // Right MouseDown = 3, MouseUp = 4
-                else if (button == 2) type = isDown ? 25u : 26u; // Other MouseDown = 25, MouseUp = 26
-
-                if (type == 0) return;
+                if (!MacInputMapping.TryMapRawMouseClickType(button, isDown, out uint type)) return;
 
                 CGPoint pos = new CGPoint { x = x, y = y };
                 // [v7.1] kCGEventSourceStateCombinedSessionState(0) ????IntPtr.Zero ????
@@ -106,12 +101,7 @@ namespace SharpKVM
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
             try {
-                uint type = 0;
-                if (button == 0) type = 6u; // Left MouseDragged = 6
-                else if (button == 1) type = 7u; // Right MouseDragged = 7
-                else if (button == 2) type = 27u; // Other MouseDragged = 27
-
-                if (type == 0) return;
+                if (!MacInputMapping.TryMapRawMouseDragType(button, out uint type)) return;
 
                 CGPoint pos = new CGPoint { x = x, y = y };
                 IntPtr mouseEvent = CGEventCreateMouseEvent(IntPtr.Zero, type, pos, button);

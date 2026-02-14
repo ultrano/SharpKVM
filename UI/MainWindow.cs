@@ -1806,10 +1806,7 @@ namespace SharpKVM
                     // Ctrl -> Ctrl (??덉뵬)
                     // Win -> Opt (VcLeftMeta -> VcLeftAlt)
                     // Alt -> Cmd (VcLeftAlt -> VcLeftMeta)
-                    if (code == KeyCode.VcLeftMeta) code = KeyCode.VcLeftAlt;
-                    else if (code == KeyCode.VcRightMeta) code = KeyCode.VcRightAlt;
-                    else if (code == KeyCode.VcLeftAlt) code = KeyCode.VcLeftMeta;
-                    else if (code == KeyCode.VcRightAlt) code = KeyCode.VcRightMeta;
+                    code = MacInputMapping.MapKeyCodeForMacRemote(code);
                 }
 
                 // [v6.6] Caps Lock ?紐꾨선 癰궰野?筌왖?? 
@@ -1829,10 +1826,7 @@ namespace SharpKVM
             if (code == KeyCode.VcLeftMeta || code == KeyCode.VcRightMeta) _isLocalMetaDown = false;
             if (_isRemoteActive && _activeRemoteClient != null) { 
                 if (_activeRemoteClient.IsMac) { 
-                    if (code == KeyCode.VcLeftMeta) code = KeyCode.VcLeftAlt; 
-                    else if (code == KeyCode.VcRightMeta) code = KeyCode.VcRightAlt;
-                    else if (code == KeyCode.VcLeftAlt) code = KeyCode.VcLeftMeta;
-                    else if (code == KeyCode.VcRightAlt) code = KeyCode.VcRightMeta;
+                    code = MacInputMapping.MapKeyCodeForMacRemote(code);
                 }
                 _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.KeyUp, KeyCode = (int)code }); e.SuppressEvent = true; 
             } 
