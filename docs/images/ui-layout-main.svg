@@ -1,0 +1,51 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900">
+  <defs>
+    <style>
+      .title { font: 700 28px 'Segoe UI', Arial, sans-serif; fill: #12212f; }
+      .label { font: 600 16px 'Segoe UI', Arial, sans-serif; fill: #1d2d3d; }
+      .small { font: 500 13px 'Segoe UI', Arial, sans-serif; fill: #2c3e50; }
+      .card { fill: #f7fbff; stroke: #4f8cc9; stroke-width: 2; rx: 10; }
+      .pane { fill: #eef5fb; stroke: #89a9c8; stroke-width: 1.5; rx: 8; }
+      .accent { fill: #dfefff; stroke: #4f8cc9; stroke-width: 1.5; rx: 8; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="900" fill="#e7eef5"/>
+  <text x="40" y="52" class="title">SharpKVM UI Layout Spec - Main Window</text>
+
+  <rect x="40" y="80" width="1200" height="780" class="card"/>
+  <text x="56" y="110" class="label">MainWindow (1000x750, CenterScreen)</text>
+
+  <rect x="60" y="130" width="1160" height="48" class="accent"/>
+  <text x="80" y="160" class="label">Row 1: Tab Header (Server | Client)</text>
+
+  <rect x="60" y="188" width="1160" height="480" class="pane"/>
+  <text x="80" y="218" class="label">Row 2: Tab Content</text>
+
+  <rect x="84" y="236" width="540" height="404" class="card"/>
+  <text x="100" y="262" class="label">Server Tab</text>
+
+  <rect x="100" y="278" width="508" height="56" class="accent"/>
+  <text x="114" y="312" class="small">Header: Start/Stop Button | Server Info | Layout Combo(Snap/Free)</text>
+
+  <rect x="100" y="344" width="508" height="252" class="pane"/>
+  <text x="114" y="370" class="small">Editor Border</text>
+  <rect x="118" y="386" width="472" height="150" fill="#d8e7f3" stroke="#89a9c8"/>
+  <text x="130" y="412" class="small">Stage Canvas: Screen map + Placed Clients</text>
+  <rect x="118" y="544" width="472" height="40" fill="#c8d9e8" stroke="#89a9c8"/>
+  <text x="130" y="569" class="small">Dock Panel: Unplaced Clients</text>
+
+  <rect x="656" y="236" width="540" height="404" class="card"/>
+  <text x="672" y="262" class="label">Client Tab</text>
+  <rect x="686" y="298" width="480" height="64" class="accent"/>
+  <text x="706" y="336" class="small">Server IP TextBox</text>
+  <rect x="686" y="378" width="480" height="64" class="accent"/>
+  <text x="706" y="416" class="small">Connect / Disconnect Button</text>
+
+  <rect x="60" y="678" width="1160" height="52" class="accent"/>
+  <text x="80" y="710" class="label">Row 3: Status Bar (Ready / Runtime Status)</text>
+
+  <rect x="60" y="738" width="1160" height="122" class="pane"/>
+  <text x="80" y="770" class="label">Row 4: Log Panel (TextBox, ReadOnly, 120px)</text>
+  <text x="80" y="795" class="small">Format: [mm:ss] message</text>
+</svg>

@@ -1,0 +1,53 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="860" viewBox="0 0 1280 860">
+  <defs>
+    <style>
+      .title { font: 700 28px 'Segoe UI', Arial, sans-serif; fill: #112233; }
+      .label { font: 600 16px 'Segoe UI', Arial, sans-serif; fill: #1f344a; }
+      .small { font: 500 13px 'Segoe UI', Arial, sans-serif; fill: #324b63; }
+      .screen { fill: #5d8fbf; stroke: #ffffff; stroke-width: 2; rx: 6; }
+      .slot { fill: #a9c6df; stroke: #5d8fbf; stroke-width: 1.5; }
+      .client { fill: #3ca766; stroke: #1c6a3a; stroke-width: 2; rx: 6; }
+      .dock { fill: #d0dde8; stroke: #8ba6bd; stroke-width: 1.5; rx: 6; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="860" fill="#e8eef4"/>
+  <text x="38" y="52" class="title">SharpKVM UI Layout Spec - Server Stage / Snap-Free Mapping</text>
+
+  <rect x="40" y="80" width="1200" height="720" fill="#f7fbff" stroke="#4f8cc9" stroke-width="2" rx="10"/>
+  <text x="60" y="112" class="label">Server Tab Editor Area</text>
+
+  <rect x="72" y="130" width="1136" height="520" fill="#d9e6f2" stroke="#89a9c8" stroke-width="1.5" rx="8"/>
+  <text x="92" y="158" class="label">Stage Canvas (Desktop space projected)</text>
+
+  <rect x="210" y="230" width="360" height="220" class="screen"/>
+  <text x="345" y="335" text-anchor="middle" fill="#ffffff" class="label">S1 (Primary)</text>
+
+  <rect x="730" y="210" width="260" height="170" class="screen"/>
+  <text x="860" y="292" text-anchor="middle" fill="#ffffff" class="label">S2</text>
+
+  <rect x="180" y="230" width="24" height="220" class="slot"/>
+  <text x="155" y="340" class="small">Left Slot</text>
+  <rect x="570" y="230" width="24" height="220" class="slot"/>
+  <text x="596" y="340" class="small">Right Slot</text>
+  <rect x="210" y="206" width="360" height="24" class="slot"/>
+  <text x="350" y="196" text-anchor="middle" class="small">Top Slot</text>
+  <rect x="210" y="450" width="360" height="24" class="slot"/>
+  <text x="350" y="494" text-anchor="middle" class="small">Bottom Slot</text>
+
+  <rect x="594" y="260" width="132" height="150" class="client"/>
+  <text x="660" y="336" text-anchor="middle" fill="#ffffff" class="small">Placed Client A</text>
+
+  <rect x="770" y="390" width="200" height="140" fill="#63b381" stroke="#1c6a3a" stroke-width="2" stroke-dasharray="6 4" rx="6"/>
+  <text x="870" y="465" text-anchor="middle" fill="#ffffff" class="small">Free Mode Client B</text>
+
+  <rect x="72" y="662" width="1136" height="110" class="dock"/>
+  <text x="92" y="694" class="label">Dock Panel (Unplaced clients)</text>
+  <rect x="110" y="710" width="130" height="44" fill="#f39c3d" stroke="#d1790f" stroke-width="2" rx="6"/>
+  <text x="175" y="738" text-anchor="middle" class="small">Client-X</text>
+  <rect x="256" y="710" width="130" height="44" fill="#f39c3d" stroke="#d1790f" stroke-width="2" rx="6"/>
+  <text x="321" y="738" text-anchor="middle" class="small">Client-Y</text>
+
+  <text x="660" y="694" class="small">Snap mode: slot-based attach</text>
+  <text x="660" y="718" class="small">Free mode: nearest edge + magnetic snap</text>
+</svg>
