@@ -140,7 +140,7 @@ namespace SharpKVM
 
         public MainWindow()
         {
-            this.Title = "SharpKVM (v7.7)";
+            this.Title = "SharpKVM (v7.8)";
             this.Width = 1000;
             this.Height = 750;
             this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -1875,7 +1875,7 @@ namespace SharpKVM
                             }
 
                             Dispatcher.UIThread.Post(() => Log(
-                                $"Mac InputSource: status={diagnostics.Status}, capslock_option={diagnostics.IsCapsLockInputSourceSwitchEnabled}, primary=[{diagnostics.PrimarySummary}], secondary=[{diagnostics.SecondarySummary}], details={diagnostics.Details}"));
+                                $"Mac InputSource: status={diagnostics.Status}, capslock_option={diagnostics.IsCapsLockInputSourceSwitchEnabled}, option_source={diagnostics.CapsLockOptionSource}, raw_option_key={diagnostics.RawOptionKey}, raw_option_value={diagnostics.RawOptionValue}, primary=[{diagnostics.PrimarySummary}], secondary=[{diagnostics.SecondarySummary}], details={diagnostics.Details}"));
                         }
                         using (var stream = _currentClientSocket.GetStream()) {
                                 if (this.Screens.Primary != null) {

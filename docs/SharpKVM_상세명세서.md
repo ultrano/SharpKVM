@@ -1,6 +1,6 @@
 ﻿# SharpKVM 상세 명세서 (코드베이스 기준)
 
-문서 버전: 1.3  
+문서 버전: 1.4  
 작성일: 2026-02-14  
 코드 기준: `App/Program.cs`, `UI/MainWindow.cs`, `SharpKVM.csproj`, `SharpKVM.sln`
 
@@ -55,7 +55,7 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 ## 5. 화면(UI) 명세
 
 ### 5.1 Main Window
-- 제목: `SharpKVM (v7.7)`
+- 제목: `SharpKVM (v7.8)`
 - 기본 크기: `1000 x 750`
 - 구성:
 1. 상단(자동 높이): 탭 헤더
@@ -191,8 +191,8 @@ SharpKVM은 단일 실행 파일 기반의 데스크톱 KVM 애플리케이션�
 - `Meta ↔ Alt` 교환
 - macOS 클라이언트는 입력 소스 단축키(`AppleSymbolicHotKeys` 60/61)를 주기 조회
 - 수신한 키 조합이 현재 입력 소스 단축키와 일치하면 해당 동작을 mac에서 직접 실행
-- `CapsLock` 전환은 mac 옵션 `Use the Caps Lock key to switch to and from ABC`가 반영된 상태에서만 허용
-- macOS 클라이언트 연결 시 입력소스 단축키 로드 결과(status/옵션값/primary/secondary)를 로그에 출력
+- `CapsLock` 전환 가능 여부는 `com.apple.HIToolbox.plist` 옵션 탐지값과 `AppleSymbolicHotKeys`의 CapsLock 단축키 여부를 OR로 결합해 결정
+- macOS 클라이언트 연결 시 입력소스 단축키 로드 결과(status/옵션값/옵션소스/raw option key/value/primary/secondary)를 로그에 출력
 
 ### 9.5 마우스 버튼/휠
 - MouseDown/Up 시 clickCount 포함(더블클릭 감지)

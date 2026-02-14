@@ -71,6 +71,9 @@ public sealed class MacInputSourceHotkeysDiagnostics
 {
     public required MacInputSourceHotkeysLoadStatus Status { get; init; }
     public required bool IsCapsLockInputSourceSwitchEnabled { get; init; }
+    public required string CapsLockOptionSource { get; init; }
+    public required string RawOptionKey { get; init; }
+    public required string RawOptionValue { get; init; }
     public required string PrimarySummary { get; init; }
     public required string SecondarySummary { get; init; }
     public required string Details { get; init; }

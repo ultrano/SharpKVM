@@ -111,4 +111,63 @@ public class MacInputSourceHotkeyMapperTests
 
         Assert.False(enabled);
     }
+
+    [Fact]
+    public void TryReadCapsLockOptionFromHitoolboxJson_ReadsExplicitKey_AsTrue()
+    {
+        const string json = """
+                            {
+                              "AppleGlobalTextInputProperties": {
+                                "UseCapsLockSwitchToAndFromABC": 1
+                              }
+                            }
+                            """;
+
+        var result = MacInputSourceHotkeyProvider.TryReadCapsLockOptionFromHitoolboxJson(json);
+
+        Assert.True(result.HasValue);
+        Assert.True(result.Value);
+        Assert.Equal("hitoolbox_explicit", result.Source);
+        Assert.Equal("AppleGlobalTextInputProperties.UseCapsLockSwitchToAndFromABC", result.RawKey);
+        Assert.Equal("1", result.RawValue);
+    }
+
+    [Fact]
+    public void TryReadCapsLockOptionFromHitoolboxJson_ReadsRecursiveCapsLockKey_AsFalse()
+    {
+        const string json = """
+                            {
+                              "Nested": {
+                                "AppleCapsLockInputSourceSwitchEnabled": false
+                              }
+                            }
+                            """;
+
+        var result = MacInputSourceHotkeyProvider.TryReadCapsLockOptionFromHitoolboxJson(json);
+
+        Assert.True(result.HasValue);
+        Assert.False(result.Value);
+        Assert.Equal("hitoolbox_recursive", result.Source);
+        Assert.Equal("Nested.AppleCapsLockInputSourceSwitchEnabled", result.RawKey);
+        Assert.Equal("false", result.RawValue);
+    }
+
+    [Fact]
+    public void TryReadCapsLockOptionFromHitoolboxJson_ReturnsUnavailable_WhenNoKeyFound()
+    {
+        const string json = """
+                            {
+                              "AppleEnabledInputSources": [
+                                { "InputSourceKind": "Keyboard Layout" }
+                              ]
+                            }
+                            """;
+
+        var result = MacInputSourceHotkeyProvider.TryReadCapsLockOptionFromHitoolboxJson(json);
+
+        Assert.False(result.HasValue);
+        Assert.Equal("unavailable", result.Source);
+        Assert.Equal("n/a", result.RawKey);
+        Assert.Equal("n/a", result.RawValue);
+    }
 }
