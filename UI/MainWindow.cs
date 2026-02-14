@@ -1948,6 +1948,7 @@ namespace SharpKVM
             foreach (var hotkey in _macInputSourceHotkeys.Enumerate())
             {
                 if (!hotkey.Matches(_remotePressedKeys, triggerKey)) continue;
+                if (hotkey.IsCapsLockPlainSwitch && !_macInputSourceHotkeys.IsCapsLockInputSourceSwitchEnabled) continue;
                 if (!MacInputSourceSwitcher.Execute(hotkey)) return false;
 
                 foreach (var key in _remotePressedKeys)

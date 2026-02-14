@@ -69,10 +69,16 @@ public static class MacInputSourceHotkeyProvider
                 return false;
             }
 
+            var primary = TryParseHotkey(hotkeysRoot, SymbolicHotkeyPrimary, "InputSourcePrimary");
+            var secondary = TryParseHotkey(hotkeysRoot, SymbolicHotkeySecondary, "InputSourceSecondary");
+
             hotkeys = new MacInputSourceHotkeys
             {
-                Primary = TryParseHotkey(hotkeysRoot, SymbolicHotkeyPrimary, "InputSourcePrimary"),
-                Secondary = TryParseHotkey(hotkeysRoot, SymbolicHotkeySecondary, "InputSourceSecondary")
+                Primary = primary,
+                Secondary = secondary,
+                IsCapsLockInputSourceSwitchEnabled =
+                    (primary?.IsCapsLockPlainSwitch ?? false) ||
+                    (secondary?.IsCapsLockPlainSwitch ?? false)
             };
 
             return hotkeys.Primary != null || hotkeys.Secondary != null;

@@ -23,6 +23,11 @@ public sealed class MacInputSourceHotkey
     public required KeyCode TriggerKey { get; init; }
     public required MacModifierMask RequiredModifiers { get; init; }
 
+    public bool IsCapsLockPlainSwitch =>
+        TriggerKey == KeyCode.VcCapsLock &&
+        MacVirtualKeyCode == 57 &&
+        RequiredModifiers == MacModifierMask.None;
+
     public bool Matches(IReadOnlyCollection<KeyCode> pressedKeys, KeyCode triggerKey)
     {
         if (triggerKey != TriggerKey)
@@ -38,6 +43,7 @@ public sealed class MacInputSourceHotkeys
 {
     public MacInputSourceHotkey? Primary { get; init; }
     public MacInputSourceHotkey? Secondary { get; init; }
+    public bool IsCapsLockInputSourceSwitchEnabled { get; init; }
 
     public IEnumerable<MacInputSourceHotkey> Enumerate()
     {
