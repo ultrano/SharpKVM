@@ -22,4 +22,4 @@ Use the spec and UI layout files first when the user asks for:
 2. If code and docs differ, treat code as source of truth and update the docs in the same task.
 3. When producing outputs, cite these file paths explicitly.
 4. Keep both SVG layout files in sync with major UI structure changes.
-
+5. When applying a fix or feature change, bump `<Version>` in `SharpKVM.csproj` and run a Release build (`dotnet build SharpKVM.csproj -c Release`) before handing off.

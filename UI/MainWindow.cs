@@ -112,6 +112,7 @@ namespace SharpKVM
         private DateTime _lastMacShortcutTime = DateTime.MinValue;
         private MacInputSourceHotkeys? _macInputSourceHotkeys;
         private DateTime _lastMacInputSourceHotkeyRefresh = DateTime.MinValue;
+        private DateTime _lastMacAccessibilityStatusLogTime = DateTime.MinValue;
         private readonly HashSet<KeyCode> _remotePressedKeys = new HashSet<KeyCode>();
         private readonly HashSet<KeyCode> _forwardedRemoteKeys = new HashSet<KeyCode>();
         private readonly HashSet<KeyCode> _consumedInputSourceKeys = new HashSet<KeyCode>();
@@ -147,7 +148,7 @@ namespace SharpKVM
 
         public MainWindow()
         {
-            this.Title = "SharpKVM (v7.8)";
+            this.Title = "SharpKVM (v7.8.1)";
             this.Width = 1000;
             this.Height = 750;
             this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -2089,12 +2090,25 @@ namespace SharpKVM
                             {
                                 if (_chkMacCapsLockInputSourceSwitch != null)
                                 {
-                                    _chkMacCapsLockInputSourceSwitch.IsChecked = diagnostics.IsCapsLockInputSourceSwitchEnabled;
+                                    bool canTrustDetectedOption =
+                                        diagnostics.Status != MacInputSourceHotkeysLoadStatus.JsonParseFailed &&
+                                        diagnostics.Status != MacInputSourceHotkeysLoadStatus.PlutilFailed &&
+                                        diagnostics.Status != MacInputSourceHotkeysLoadStatus.PlistNotFound;
+
+                                    if (canTrustDetectedOption)
+                                    {
+                                        _chkMacCapsLockInputSourceSwitch.IsChecked = diagnostics.IsCapsLockInputSourceSwitchEnabled;
+                                    }
+                                    else
+                                    {
+                                        Log($"Mac CapsLock option detection unavailable ({diagnostics.Status}); keeping current toggle={_chkMacCapsLockInputSourceSwitch.IsChecked == true}");
+                                    }
                                 }
                             });
 
                             Dispatcher.UIThread.Post(() => Log(
                                 $"Mac InputSource: status={diagnostics.Status}, capslock_option={diagnostics.IsCapsLockInputSourceSwitchEnabled}, option_source={diagnostics.CapsLockOptionSource}, raw_option_key={diagnostics.RawOptionKey}, raw_option_value={diagnostics.RawOptionValue}, primary=[{diagnostics.PrimarySummary}], secondary=[{diagnostics.SecondarySummary}], details={diagnostics.Details}"));
+                            Dispatcher.UIThread.Post(() => LogMacAccessibilityStatusIfNeeded(force: true));
                         }
                         using (var stream = _currentClientSocket.GetStream()) {
                                 if (this.Screens.Primary != null) {
@@ -2289,6 +2303,20 @@ namespace SharpKVM
             return _chkMacCapsLockInputSourceSwitch.IsChecked == true;
         }
 
+        private void LogMacAccessibilityStatusIfNeeded(bool force = false)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
+            if (!force && (DateTime.UtcNow - _lastMacAccessibilityStatusLogTime).TotalSeconds < 10) return;
+            _lastMacAccessibilityStatusLogTime = DateTime.UtcNow;
+
+            bool trusted = MacAccessibilityDiagnostics.IsAccessibilityTrusted();
+            Log($"[MacInput][Access] AXIsProcessTrusted={trusted}");
+            if (!trusted)
+            {
+                Log("[MacInput][Access] macOS Accessibility permission is not granted. Keyboard/mouse injection may fail.");
+            }
+        }
+
         private void SimulateInput(InputPacket p) {
             try {
                 switch(p.Type) {
@@ -2348,6 +2376,7 @@ namespace SharpKVM
 
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                         {
+                            LogMacAccessibilityStatusIfNeeded();
                             if (isKeyDown) _remotePressedKeys.Add(code);
                             else _remotePressedKeys.Remove(code);
 
