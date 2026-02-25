@@ -148,7 +148,7 @@ namespace SharpKVM
 
         public MainWindow()
         {
-            this.Title = "SharpKVM (v7.8.1)";
+            this.Title = "SharpKVM (v7.8.2)";
             this.Width = 1000;
             this.Height = 750;
             this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -2369,14 +2369,13 @@ namespace SharpKVM
                         var code = (KeyCode)p.KeyCode;
                         bool isKeyDown = p.Type == PacketType.KeyDown;
                         bool isDiagnosticKey = IsMacInputDiagnosticKey(code);
-                        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                        {
-                            Log($"[MacInput][RX] packet={p.Type} code={code}");
-                        }
 
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                         {
-                            LogMacAccessibilityStatusIfNeeded();
+                            if (isDiagnosticKey)
+                            {
+                                LogMacAccessibilityStatusIfNeeded();
+                            }
                             if (isKeyDown) _remotePressedKeys.Add(code);
                             else _remotePressedKeys.Remove(code);
 
