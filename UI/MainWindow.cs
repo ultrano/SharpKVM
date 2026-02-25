@@ -1,4 +1,4 @@
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -128,15 +128,20 @@ namespace SharpKVM
         private int _pendingMouseY = -1;
         private bool _hasPendingMouse = false;
         private CancellationTokenSource? _mouseSenderCts;
+        private readonly object _diagnosticLogLock = new object();
+        private readonly string _diagnosticLogPath = Path.Combine(
+            AppDomain.CurrentDomain.BaseDirectory,
+            "logs",
+            $"sharpkvm-{DateTime.Now:yyyyMMdd-HHmmss}.log");
 
         private double _wheelAccumulator = 0;
 
-        // [?醫됲뇣] ?遺얩닜????筌왖?癒?뱽 ?袁る립 癰궰??
+        // [??ル맪?? ??븐뼦??????嶺뚯솘????諭??熬곥굥由??곌떠???
         private DateTime _lastClickTime = DateTime.MinValue;
         private int _lastClickButton = -1;
         private int _clickCount = 1;
 
-        // [?醫됲뇣] ?????곷섧???袁⑹삺 ?袁⑺뒄 ?곕뗄??癰궰??(Zoom ?얜챷????욧퍙??
+        // [??ル맪?? ??????怨룹꽘???熬곣뫗???熬곣뫚???怨뺣뾼???곌떠???(Zoom ??쒖굣?????㏉뜖??
         private double _currentClientX = -1;
         private double _currentClientY = -1;
 
@@ -162,6 +167,7 @@ namespace SharpKVM
             _clipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2000) }; 
             _clipboardTimer.Tick += (s,e) => _ = Task.Run(() => CheckClipboard()); 
             _clipboardTimer.Start();
+            Log($"Diagnostic log file: {_diagnosticLogPath}");
         }
 
         private void InitializeUI()
@@ -269,10 +275,51 @@ namespace SharpKVM
             this.Content = root;
         }
 
-        private void Log(string msg) => Dispatcher.UIThread.Post(() => {
-            _txtLog.Text += $"[{DateTime.Now:mm:ss}] {msg}\n";
-            _txtLog.CaretIndex = _txtLog.Text.Length;
-        });
+        private void Log(string msg)
+        {
+            string line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {msg}";
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                _txtLog.Text += $"{line}\n";
+                _txtLog.CaretIndex = _txtLog.Text.Length;
+            });
+
+            try
+            {
+                lock (_diagnosticLogLock)
+                {
+                    string? directory = Path.GetDirectoryName(_diagnosticLogPath);
+                    if (!string.IsNullOrEmpty(directory))
+                    {
+                        Directory.CreateDirectory(directory);
+                    }
+                    File.AppendAllText(_diagnosticLogPath, line + Environment.NewLine);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static bool IsMacInputDiagnosticKey(KeyCode code)
+        {
+            return code == KeyCode.VcCapsLock ||
+                   code == KeyCode.VcSpace ||
+                   code == KeyCode.VcLeftControl ||
+                   code == KeyCode.VcRightControl ||
+                   code == KeyCode.VcLeftAlt ||
+                   code == KeyCode.VcRightAlt ||
+                   code == KeyCode.VcLeftMeta ||
+                   code == KeyCode.VcRightMeta ||
+                   code == KeyCode.VcLeftShift ||
+                   code == KeyCode.VcRightShift;
+        }
+
+        private static string FormatKeySet(IEnumerable<KeyCode> keys)
+        {
+            return string.Join(",", keys.OrderBy(k => (int)k));
+        }
 
         public void SetRemoteClipboard(string text) {
             _lastRecvText = text;
@@ -1350,11 +1397,11 @@ namespace SharpKVM
                 _hook.MousePressed += OnHookMousePressed; _hook.MouseReleased += OnHookMouseReleased;
                 _hook.MouseWheel += OnHookMouseWheel;
                 
-                // [?醫됲뇣] ??彛??袁⑸꽊 ??뽰삂
+                // [??ル맪?? ???壤??熬곣뫖苑???戮곗굚
                 _mouseSenderCts = new CancellationTokenSource();
                 Task.Run(() => StartMouseSenderLoop(_mouseSenderCts.Token));
 
-                // [??륁젟] ?????곷섧??癰귣떯而???볤탢嚥??紐낅퉸 ?온??Task ??볤탢??
+                // [??瑜곸젧] ??????怨룹꽘???곌랜?????蹂ㅽ깴???筌뤿굝????㉱??Task ??蹂ㅽ깴??
 
                 Task.Run(() => _hook.Run());
                 AcceptClients();
@@ -1365,11 +1412,11 @@ namespace SharpKVM
             _isServerRunning = false;
             StopVirtualClientForDebug();
             
-            // [?醫됲뇣] ?袁⑸꽊 ?룐뫂遊??類?
+            // [??ル맪?? ?熬곣뫖苑??猷먮쳜???筌?
             _mouseSenderCts?.Cancel();
             _mouseSenderCts = null;
             
-            // [??륁젟] 癰귣떯而???볤탢嚥??온??嚥≪뮇彛?????
+            // [??瑜곸젧] ?곌랜?????蹂ㅽ깴????㉱???β돦裕뉐퐲?????
 
             _serverListener?.Stop(); _hook?.Dispose();
             CursorManager.Show(); CursorManager.Unlock(); 
@@ -1381,7 +1428,7 @@ namespace SharpKVM
             SaveClientConfigs(); 
         }
 
-        // [?醫됲뇣] 筌띾뜆????ル슦紐??袁⑸꽊 ?袁⑹뒠 ?룐뫂遊?(120Hz = ~8ms)
+        // [??ル맪?? 嶺뚮씭??????レ뒭筌??熬곣뫖苑??熬곣뫗???猷먮쳜??(120Hz = ~8ms)
         private async Task StartMouseSenderLoop(CancellationToken token)
         {
             try 
@@ -1390,19 +1437,19 @@ namespace SharpKVM
                 {
                     if (_isRemoteActive && _activeRemoteClient != null && _hasPendingMouse)
                     {
-                        // ????곸뵠 ?癒?쁽?怨몄몵嚥???꾨┛ ??뺣즲 (int??atomic)
+                        // ????怨몃턄 ??????⑤챷紐드슖???袁ⓥ뵛 ??類ｌ┣ (int??atomic)
                         int x = _pendingMouseX;
                         int y = _pendingMouseY;
                         
-                        // ??? 癰귣?沅??ル슦紐댐쭖???쎄땁
+                        // ???? ?곌랜?亦???レ뒭筌뤿뙋彛????꾨븕
                         _hasPendingMouse = false; 
 
-                        // [v6.4] ??뺤삋域?餓λ쵐肉?????땅 ?醫롫뼄 獄쎻뫗????袁る퉸 筌앸맩???袁⑸꽊???醫듼봺??????됱몵?? 
-                        // ?袁⑹삺 ?룐뫂遊썲첎? 5ms嚥??겸뫖?????쥓?ㅸ첋?嚥???곕뼊 ?醫?.
-                        // ??살춸, MouseDown/Up??筌앸맩???袁⑸꽊???嚥???뽮퐣 ????獄쎻뫗????袁る퉸 
-                        // ??뺤삋域???뽰삂/?ル굝利???뽰젎????뺣뎃???ル슦紐닷첎? ??덈뼄筌??믪눘? 癰귣?沅??嚥≪뮇彛???袁⑹뒄??????됱벉.
+                        // [v6.4] ??類ㅼ굥??繞벿살탳??????????ル∥堉??꾩렮維????熬곥굥??嶺뚯빖留???熬곣뫖苑????ル벣遊???????깅さ?? 
+                        // ?熬곣뫗???猷먮쳜?딆뜴泥? 5ms???寃몃쳳?????伊??몄쾵?????怨뺣펺 ???.
+                        // ???댁떳, MouseDown/Up??嶺뚯빖留???熬곣뫖苑???????戮?맋 ?????꾩렮維????熬곥굥??
+                        // ??類ㅼ굥????戮곗굚/??リ턁筌???戮곗젍????類ｋ럠????レ뒭筌뤿떣泥? ???덈펲嶺??誘る닔? ?곌랜?亦???β돦裕뉐퐲???熬곣뫗????????깅쾳.
                         
-                        // ??쇱젫 ?袁⑸꽊
+                        // ???깆젷 ?熬곣뫖苑?
                         _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = x, Y = y });
                     }
                     await Task.Delay(5, token); // ??200Hz
@@ -1416,7 +1463,7 @@ namespace SharpKVM
                 try {
                     if(_serverListener == null) break;
                     var client = await _serverListener.AcceptTcpClientAsync();
-                    // [??륁젟] NoDelay ??쇱젟
+                    // [??瑜곸젧] NoDelay ???깆젧
                     client.NoDelay = true;
 
                     var handler = new ClientHandler(client, this);
@@ -1445,11 +1492,11 @@ namespace SharpKVM
             }
         }
 
-        // [癰귣벀?? 筌롫뗄苑???곕떽?
+        // [?곌랜踰?? 嶺뚮∥?꾥땻???怨뺣뼺?
         private void OnHookMousePressed(object? sender, MouseHookEventArgs e) { 
             if (e.Data.Button == SharpHook.Native.MouseButton.Button1) _isLeftDragging = true; 
             if (_isRemoteActive && _activeRemoteClient != null) { 
-                // [v6.5] ?遺얩닜????嚥≪뮇彛??곕떽?
+                // [v6.5] ??븐뼦???????β돦裕뉐퐲??怨뺣뼺?
                 var now = DateTime.Now;
                 if (_lastClickButton == (int)e.Data.Button && (now - _lastClickTime).TotalMilliseconds < 500) {
                     _clickCount++;
@@ -1459,7 +1506,7 @@ namespace SharpKVM
                 _lastClickTime = now;
                 _lastClickButton = (int)e.Data.Button;
 
-                // [v6.4] ????????뺣뎃????猷??ル슦紐닷첎? ??덈뼄筌?筌앸맩???袁⑸꽊??뤿연 ??뽮퐣 癰귣똻??
+                // [v6.4] ?????????類ｋ럠?????????レ뒭筌뤿떣泥? ???덈펲嶺?嶺뚯빖留???熬곣뫖苑??琉우뿰 ??戮?맋 ?곌랜???
                 if (_hasPendingMouse) {
                     _hasPendingMouse = false;
                     _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = _pendingMouseX, Y = _pendingMouseY });
@@ -1468,7 +1515,7 @@ namespace SharpKVM
                 _activeRemoteClient.SendPacketAsync(new InputPacket { 
                     Type = PacketType.MouseDown, 
                     KeyCode = (int)e.Data.Button,
-                    X = (int)_virtualX, // [?醫됲뇣] ??????뽰젎 ?ル슦紐???녿┛??
+                    X = (int)_virtualX, // [??ル맪?? ???????戮곗젍 ??レ뒭筌????욋뵛??
                     Y = (int)_virtualY,
                     ClickCount = _clickCount
                 }); 
@@ -1476,11 +1523,11 @@ namespace SharpKVM
             } 
         }
 
-        // [癰귣벀?? 筌롫뗄苑???곕떽?
+        // [?곌랜踰?? 嶺뚮∥?꾥땻???怨뺣뼺?
         private void OnHookMouseReleased(object? sender, MouseHookEventArgs e) { 
             if (e.Data.Button == SharpHook.Native.MouseButton.Button1) _isLeftDragging = false; 
             if (_isRemoteActive && _activeRemoteClient != null) { 
-                // [v6.4] ??????곸젫 ????뺣뎃????猷??ル슦紐닷첎? ??덈뼄筌?筌앸맩???袁⑸꽊
+                // [v6.4] ???????怨몄젷 ????類ｋ럠?????????レ뒭筌뤿떣泥? ???덈펲嶺?嶺뚯빖留???熬곣뫖苑?
                 if (_hasPendingMouse) {
                     _hasPendingMouse = false;
                     _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = _pendingMouseX, Y = _pendingMouseY });
@@ -1489,7 +1536,7 @@ namespace SharpKVM
                 _activeRemoteClient.SendPacketAsync(new InputPacket { 
                     Type = PacketType.MouseUp, 
                     KeyCode = (int)e.Data.Button,
-                    X = (int)_virtualX, // [?醫됲뇣] ??????뽰젎 ?ル슦紐???녿┛??
+                    X = (int)_virtualX, // [??ル맪?? ???????戮곗젍 ??レ뒭筌????욋뵛??
                     Y = (int)_virtualY,
                     ClickCount = _clickCount
                 }); 
@@ -1910,53 +1957,64 @@ namespace SharpKVM
             CursorManager.Hide();
             e.SuppressEvent = true;
         }
-
-        private void OnHookKeyPressed(object? s, KeyboardHookEventArgs e) {
+        private void OnHookKeyPressed(object? s, KeyboardHookEventArgs e)
+        {
             var code = e.Data.KeyCode;
-            
+
             if (code == KeyCode.VcLeftControl || code == KeyCode.VcRightControl) _isLocalCtrlDown = true;
             if (code == KeyCode.VcLeftMeta || code == KeyCode.VcRightMeta) _isLocalMetaDown = true;
-            
-            if ((DateTime.Now - _lastReturnTime).TotalSeconds > 1 && !_isRemoteActive) {
+
+            if ((DateTime.Now - _lastReturnTime).TotalSeconds > 1 && !_isRemoteActive)
+            {
             }
 
-            if (code == KeyCode.VcC && (_isLocalCtrlDown || _isLocalMetaDown)) { 
-                _ = Task.Run(async () => { await Task.Delay(100); Dispatcher.UIThread.Post(() => CheckClipboard()); }); 
+            if (code == KeyCode.VcC && (_isLocalCtrlDown || _isLocalMetaDown))
+            {
+                _ = Task.Run(async () => { await Task.Delay(100); Dispatcher.UIThread.Post(() => CheckClipboard()); });
             }
-            if (code == KeyCode.VcV && (_isLocalCtrlDown || _isLocalMetaDown)) { 
-                if (_isRemoteActive) TrySyncClipboardToRemote(); 
+            if (code == KeyCode.VcV && (_isLocalCtrlDown || _isLocalMetaDown))
+            {
+                if (_isRemoteActive) TrySyncClipboardToRemote();
             }
 
-            if (_isRemoteActive && _activeRemoteClient != null) { 
-                if (_activeRemoteClient.IsMac) { 
-                    // ??덈즲????뺤쒔) -> 筌????? ??????ν뀧??筌띲끋釉?(v6.2 ??륁젟)
-                    // Ctrl -> Ctrl (??덉뵬)
-                    // Win -> Opt (VcLeftMeta -> VcLeftAlt)
-                    // Alt -> Cmd (VcLeftAlt -> VcLeftMeta)
+            if (_isRemoteActive && _activeRemoteClient != null)
+            {
+                var originalCode = code;
+                if (_activeRemoteClient.IsMac)
+                {
                     code = MacInputMapping.MapKeyCodeForMacRemote(code);
+                    if (IsMacInputDiagnosticKey(originalCode) || IsMacInputDiagnosticKey(code))
+                    {
+                        Log($"[MacInput][TX] KeyDown local={originalCode} mapped={code} remote={GetClientKey(_activeRemoteClient)}");
+                    }
                 }
 
-                // [v6.6] Caps Lock ?紐꾨선 癰궰野?筌왖?? 
-                // 筌띘쇰퓠??뺣뮉 Caps Lock??筌욁룓苡????쑎 ?紐꾨선 癰궰野껋럩????롫뮉 疫꿸퀡?????됱벉.
-                // ??덈즲????뺤쒔?癒?퐣 Caps Lock?????죬??????? ?癒?봄筌왖嚥??類μ넇???袁⑤뼎??롫즲嚥???
+                if (code == KeyCode.VcInsert) code = (KeyCode)0xE052;
 
-                if (code == KeyCode.VcInsert) code = (KeyCode)0xE052; 
-                
-                _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.KeyDown, KeyCode = (int)code }); 
-                e.SuppressEvent = true; 
+                _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.KeyDown, KeyCode = (int)code });
+                e.SuppressEvent = true;
             }
         }
-        
-        private void OnHookKeyReleased(object? s, KeyboardHookEventArgs e) { 
+
+        private void OnHookKeyReleased(object? s, KeyboardHookEventArgs e)
+        {
             var code = e.Data.KeyCode;
             if (code == KeyCode.VcLeftControl || code == KeyCode.VcRightControl) _isLocalCtrlDown = false;
             if (code == KeyCode.VcLeftMeta || code == KeyCode.VcRightMeta) _isLocalMetaDown = false;
-            if (_isRemoteActive && _activeRemoteClient != null) { 
-                if (_activeRemoteClient.IsMac) { 
+            if (_isRemoteActive && _activeRemoteClient != null)
+            {
+                var originalCode = code;
+                if (_activeRemoteClient.IsMac)
+                {
                     code = MacInputMapping.MapKeyCodeForMacRemote(code);
+                    if (IsMacInputDiagnosticKey(originalCode) || IsMacInputDiagnosticKey(code))
+                    {
+                        Log($"[MacInput][TX] KeyUp local={originalCode} mapped={code} remote={GetClientKey(_activeRemoteClient)}");
+                    }
                 }
-                _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.KeyUp, KeyCode = (int)code }); e.SuppressEvent = true; 
-            } 
+                _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.KeyUp, KeyCode = (int)code });
+                e.SuppressEvent = true;
+            }
         }
 
         private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, int size)
@@ -2045,7 +2103,7 @@ namespace SharpKVM
                                 byte[] raw = InputPacketSerializer.Serialize(hello);
                                 await stream.WriteAsync(raw, 0, raw.Length);
 
-                                // [?醫됲뇣] ???삸???類ｋ궖 ?袁⑸꽊
+                                // [??ル맪?? ???????筌먲퐢沅??熬곣뫖苑?
                                 int platformCode = RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? 1 : 0;
                                 var platformPacket = new InputPacket { Type = PacketType.PlatformInfo, KeyCode = platformCode };
                                 byte[] pRaw = InputPacketSerializer.Serialize(platformPacket);
@@ -2073,7 +2131,7 @@ namespace SharpKVM
                                     ProcessReceivedImage(imgBytes);
                                 }
                                 else { 
-                                     SimulateInput(p); // [??륁젟] MainWindow 筌롫뗄苑???紐꾪뀱
+                                     SimulateInput(p); // [??瑜곸젧] MainWindow 嶺뚮∥?꾥땻???筌뤾쑵??
                                 }
                             }
                         }
@@ -2082,7 +2140,7 @@ namespace SharpKVM
             });
         }
 
-        // [癰귣벀?? 筌롫뗄苑???곕떽?
+        // [?곌랜踰?? 嶺뚮∥?꾥땻???怨뺣뼺?
         private void TriggerMacMissionControl(KeyCode code) {
             int macCode = 0;
             if (code == KeyCode.VcLeft) macCode = 123;
@@ -2125,42 +2183,101 @@ namespace SharpKVM
 
         private bool TryHandleMacInputSourceHotkey(KeyCode triggerKey)
         {
-            if (triggerKey == KeyCode.VcCapsLock && IsMacCapsLockInputSourceSwitchEnabled())
+            bool capsLockEnabled = IsMacCapsLockInputSourceSwitchEnabled();
+            bool isDiagnosticKey = IsMacInputDiagnosticKey(triggerKey);
+            if (isDiagnosticKey)
+            {
+                Log($"[MacInput][RX] TryHandle trigger={triggerKey} pressed=[{FormatKeySet(_remotePressedKeys)}] consumed=[{FormatKeySet(_consumedInputSourceKeys)}] capsOption={capsLockEnabled} hotkeysLoaded={_macInputSourceHotkeys != null}");
+            }
+
+            if (triggerKey == KeyCode.VcCapsLock && capsLockEnabled)
             {
                 var modifierMask = MacInputSourceHotkeyMapper.ToModifierMask(_remotePressedKeys, triggerKey);
                 if (modifierMask == MacModifierMask.None)
                 {
-                    if (!MacInputSourceSwitcher.ExecuteCapsLockToggle()) return false;
-                    ConsumeRemotePressedKeysForInputSourceHotkey();
+                    if (!MacInputSourceSwitcher.ExecuteCapsLockToggle())
+                    {
+                        Log($"[MacInput][RX] CapsLock toggle execution failed: {MacInputSourceSwitcher.LastError}");
+                        return false;
+                    }
+
+                    ConsumeRemotePressedKeysForInputSourceHotkey("capslock_direct_toggle");
                     Log("Input Source Hotkey Triggered (CapsLock)");
                     return true;
                 }
+
+                if (isDiagnosticKey)
+                {
+                    Log($"[MacInput][RX] CapsLock direct toggle skipped due to modifiers={modifierMask}");
+                }
+            }
+            else if (triggerKey == KeyCode.VcCapsLock && isDiagnosticKey)
+            {
+                Log("[MacInput][RX] CapsLock input source option is disabled; skipping direct toggle.");
             }
 
-            if (_macInputSourceHotkeys == null) return false;
+            if (_macInputSourceHotkeys == null)
+            {
+                if (isDiagnosticKey)
+                {
+                    Log("[MacInput][RX] Hotkeys not loaded; skipping symbolic hotkey matching.");
+                }
+                return false;
+            }
 
             foreach (var hotkey in _macInputSourceHotkeys.Enumerate())
             {
+                if (isDiagnosticKey && hotkey.TriggerKey == triggerKey)
+                {
+                    Log($"[MacInput][RX] Candidate {DescribeMacHotkey(hotkey)}");
+                }
                 if (!hotkey.Matches(_remotePressedKeys, triggerKey)) continue;
-                if (hotkey.IsCapsLockPlainSwitch && !IsMacCapsLockInputSourceSwitchEnabled()) continue;
-                if (!MacInputSourceSwitcher.Execute(hotkey)) return false;
-                ConsumeRemotePressedKeysForInputSourceHotkey();
+                if (hotkey.IsCapsLockPlainSwitch && !capsLockEnabled)
+                {
+                    if (isDiagnosticKey)
+                    {
+                        Log($"[MacInput][RX] Candidate matched but blocked by caps option: {DescribeMacHotkey(hotkey)}");
+                    }
+                    continue;
+                }
+                if (!MacInputSourceSwitcher.Execute(hotkey))
+                {
+                    Log($"[MacInput][RX] Hotkey execute failed: {DescribeMacHotkey(hotkey)}, error={MacInputSourceSwitcher.LastError}");
+                    return false;
+                }
+                ConsumeRemotePressedKeysForInputSourceHotkey($"symbolic_{hotkey.SymbolicHotkeyId}");
 
                 Log($"Input Source Hotkey Triggered ({hotkey.SymbolicHotkeyId})");
                 return true;
             }
 
+            if (isDiagnosticKey)
+            {
+                Log($"[MacInput][RX] No input source hotkey matched for trigger={triggerKey}.");
+            }
+
             return false;
         }
 
-        private void ConsumeRemotePressedKeysForInputSourceHotkey()
+        private static string DescribeMacHotkey(MacInputSourceHotkey hotkey)
+        {
+            return $"id={hotkey.SymbolicHotkeyId},name={hotkey.Name},trigger={hotkey.TriggerKey},required={hotkey.RequiredModifiers},vkey={hotkey.MacVirtualKeyCode},flags=0x{hotkey.MacModifierFlags:X}";
+        }
+
+        private void ConsumeRemotePressedKeysForInputSourceHotkey(string reason)
         {
             foreach (var key in _remotePressedKeys)
             {
                 _consumedInputSourceKeys.Add(key);
-                if (_forwardedRemoteKeys.Remove(key))
+                bool releasedForwardedKey = _forwardedRemoteKeys.Remove(key);
+                if (releasedForwardedKey)
                 {
                     _simulator?.SimulateKeyRelease(key);
+                }
+
+                if (IsMacInputDiagnosticKey(key))
+                {
+                    Log($"[MacInput][RX] consume key={key} reason={reason} releasedForwarded={releasedForwardedKey}");
                 }
             }
         }
@@ -2176,13 +2293,13 @@ namespace SharpKVM
             try {
                 switch(p.Type) {
                     case PacketType.MouseMove: 
-                         // [??륁젟] 筌앸맩????猷?獄??袁⑹삺 ?袁⑺뒄 ??낅쑓??꾨뱜
+                         // [??瑜곸젧] 嶺뚯빖留??????????熬곣뫗???熬곣뫚?????낆몥??袁⑤콦
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
                             if (_isLeftDragging) {
-                                // [v6.4] 筌띘쇰퓠????뺤삋域?餓λ쵐?????뮉 MouseDragged ??源?紐? 筌욊낯??獄쏆뮇源??쀪땀
+                                // [v6.4] 嶺뚮쓽?고뱺????類ㅼ굥??繞벿살탳?????裕?MouseDragged ???繹?筌? 嶺뚯쉳????꾩룇裕뉑틦???る?
                                 CursorManager.SendMacRawDrag(p.X, p.Y, 0); // 0 = LeftButton
                             } else {
-                                // [v6.7] 筌?Zoom ??띻펾?癒?퐣 Warp ???癒곕늄 ?袁⑷맒??筌띾맦由??袁る퉸 Raw Move ????
+                                // [v6.7] 嶺?Zoom ???삵렱?????Warp ????믨퀡???熬곣뫕留??嶺뚮씭留?뵳??熬곥굥??Raw Move ????
                                 CursorManager.SendMacRawMove(p.X, p.Y);
                             }
                         } else {
@@ -2194,8 +2311,8 @@ namespace SharpKVM
                     
                     case PacketType.MouseDown: 
                         if (p.KeyCode == (int)SharpHook.Native.MouseButton.Button1) _isLeftDragging = true;
-                        // [??륁젟] 筌?Zoom ??띻펾 ???? SimulateMouseMovement + SimulateMousePress 鈺곌퀬鍮?? ?됯퀬猷?硫? ?????袁⑷맒????됱벉.
-                        // 筌욊낯??CGEvent????밴쉐??뤿연 ?ル슦紐?? ???????덈뻻??癰귣?沅∽쭖?Zoom ?怨밴묶?癒?퐣???類μ넇???袁⑺뒄???????
+                        // [??瑜곸젧] 嶺?Zoom ???삵렱 ???? SimulateMouseMovement + SimulateMousePress ?브퀗?ч뜮??? ???х뙴?筌? ?????熬곣뫕留?????깅쾳.
+                        // 嶺뚯쉳???CGEvent????諛댁뎽??琉우뿰 ??レ뒭筌?? ?????????덈뻣???곌랜?亦끸댙彛?Zoom ??⑤객臾???????筌먐쇰꼪???熬곣뫚?????????
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && p.X >= 0 && p.Y >= 0) {
                             CursorManager.SendMacRawClick(p.X, p.Y, (int)p.KeyCode - 1, true, p.ClickCount);
                         } else {
@@ -2219,45 +2336,88 @@ namespace SharpKVM
                         break;
                     
                     case PacketType.MouseWheel: _simulator?.SimulateMouseWheel((short)p.KeyCode); break; 
-                    case PacketType.KeyDown: 
+                    case PacketType.KeyDown:
                     case PacketType.KeyUp:
                         var code = (KeyCode)p.KeyCode;
                         bool isKeyDown = p.Type == PacketType.KeyDown;
-                        // [??륁젟] ??? ??뺤쒔?癒?퐣 OS??筌띿쉳苡????꾨뗀諭띄몴?癰궰??묐퉸??癰귣?沅▽틠??嚥??????곷섧?紐껊뮉 筌ㅼ뮇???뽰벥 筌ｌ꼶?곻쭕???묐뻬
-                        // (?? ?????곷섧?硫? 筌띘쇱뵬 ??Mission Control ?紐꺿봺椰?嚥≪뮇彛?? ?醫?)
-                        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
+                        bool isDiagnosticKey = IsMacInputDiagnosticKey(code);
+
+                        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                        {
                             if (isKeyDown) _remotePressedKeys.Add(code);
                             else _remotePressedKeys.Remove(code);
 
+                            if (isDiagnosticKey)
+                            {
+                                Log($"[MacInput][RX] packet={p.Type} code={code} remotePressed=[{FormatKeySet(_remotePressedKeys)}] forwarded=[{FormatKeySet(_forwardedRemoteKeys)}] consumed=[{FormatKeySet(_consumedInputSourceKeys)}]");
+                            }
+
                             RefreshMacInputSourceHotkeysIfNeeded();
 
-                            if (!isKeyDown && _consumedInputSourceKeys.Remove(code)) {
+                            if (!isKeyDown && _consumedInputSourceKeys.Remove(code))
+                            {
+                                if (isDiagnosticKey)
+                                {
+                                    Log($"[MacInput][RX] KeyUp consumed by input-source handler: {code}");
+                                }
                                 return;
                             }
 
-                            if (isKeyDown && TryHandleMacInputSourceHotkey(code)) {
+                            if (isKeyDown && TryHandleMacInputSourceHotkey(code))
+                            {
+                                if (isDiagnosticKey)
+                                {
+                                    Log($"[MacInput][RX] KeyDown handled by input-source handler: {code}");
+                                }
                                 return;
                             }
 
-                            if (code == KeyCode.VcLeftControl || code == KeyCode.VcRightControl) {
+                            if (code == KeyCode.VcLeftControl || code == KeyCode.VcRightControl)
+                            {
                                 _isRemoteCtrlDown = isKeyDown;
+                                if (isDiagnosticKey)
+                                {
+                                    Log($"[MacInput][RX] RemoteCtrl state={_isRemoteCtrlDown}");
+                                }
                             }
 
-                            if (isKeyDown && _isRemoteCtrlDown) {
-                                if (code == KeyCode.VcLeft || code == KeyCode.VcRight || code == KeyCode.VcUp || code == KeyCode.VcDown) {
+                            if (isKeyDown && _isRemoteCtrlDown)
+                            {
+                                if (code == KeyCode.VcLeft || code == KeyCode.VcRight || code == KeyCode.VcUp || code == KeyCode.VcDown)
+                                {
+                                    Log($"[MacInput][RX] Trigger mission control via Ctrl+Arrow ({code})");
                                     TriggerMacMissionControl(code);
-                                    return; 
+                                    return;
                                 }
                             }
                         }
 
-                        if (isKeyDown) {
+                        if (isKeyDown)
+                        {
                             _simulator?.SimulateKeyPress(code);
-                            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) _forwardedRemoteKeys.Add(code);
+                            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                            {
+                                _forwardedRemoteKeys.Add(code);
+                                if (isDiagnosticKey)
+                                {
+                                    Log($"[MacInput][RX] Forwarded KeyDown to simulator: {code}");
+                                }
+                            }
                         }
-                        else {
-                            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || _forwardedRemoteKeys.Remove(code)) {
+                        else
+                        {
+                            bool shouldRelease = !RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || _forwardedRemoteKeys.Remove(code);
+                            if (shouldRelease)
+                            {
                                 _simulator?.SimulateKeyRelease(code);
+                                if (isDiagnosticKey)
+                                {
+                                    Log($"[MacInput][RX] Forwarded KeyUp to simulator: {code}");
+                                }
+                            }
+                            else if (isDiagnosticKey)
+                            {
+                                Log($"[MacInput][RX] KeyUp skipped (not in forwarded set): {code}");
                             }
                         }
                         break;
@@ -2267,3 +2427,5 @@ namespace SharpKVM
     }
     
 }
+
+

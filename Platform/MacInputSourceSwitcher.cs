@@ -6,6 +6,7 @@ namespace SharpKVM;
 public static class MacInputSourceSwitcher
 {
     private const ushort CapsLockVirtualKeyCode = 57;
+    public static string LastError { get; private set; } = "none";
 
     [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
     private static extern IntPtr CGEventCreateKeyboardEvent(IntPtr source, ushort virtualKey, bool keyDown);
@@ -23,15 +24,21 @@ public static class MacInputSourceSwitcher
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
+            LastError = "not_macos";
             return false;
         }
 
         try
         {
-            return ExecuteVirtualKey((ushort)hotkey.MacVirtualKeyCode, hotkey.MacModifierFlags);
+            bool ok = ExecuteVirtualKey((ushort)hotkey.MacVirtualKeyCode, hotkey.MacModifierFlags);
+            LastError = ok
+                ? $"ok:vkey={hotkey.MacVirtualKeyCode},flags=0x{hotkey.MacModifierFlags:X}"
+                : $"execute_failed:vkey={hotkey.MacVirtualKeyCode},flags=0x{hotkey.MacModifierFlags:X}";
+            return ok;
         }
-        catch
+        catch (Exception ex)
         {
+            LastError = $"exception:{ex.GetType().Name}:{ex.Message}";
             return false;
         }
     }
@@ -40,15 +47,19 @@ public static class MacInputSourceSwitcher
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
+            LastError = "not_macos";
             return false;
         }
 
         try
         {
-            return ExecuteVirtualKey(CapsLockVirtualKeyCode, 0);
+            bool ok = ExecuteVirtualKey(CapsLockVirtualKeyCode, 0);
+            LastError = ok ? "ok:capslock_toggle" : "execute_failed:capslock_toggle";
+            return ok;
         }
-        catch
+        catch (Exception ex)
         {
+            LastError = $"exception:{ex.GetType().Name}:{ex.Message}";
             return false;
         }
     }
@@ -56,14 +67,22 @@ public static class MacInputSourceSwitcher
     private static bool ExecuteVirtualKey(ushort virtualKeyCode, ulong modifierFlags)
     {
         IntPtr keyDown = CGEventCreateKeyboardEvent(IntPtr.Zero, virtualKeyCode, true);
-        if (keyDown == IntPtr.Zero) return false;
+        if (keyDown == IntPtr.Zero)
+        {
+            LastError = $"cg_keydown_null:vkey={virtualKeyCode}";
+            return false;
+        }
 
         CGEventSetFlags(keyDown, modifierFlags);
         CGEventPost(0, keyDown);
         CFRelease(keyDown);
 
         IntPtr keyUp = CGEventCreateKeyboardEvent(IntPtr.Zero, virtualKeyCode, false);
-        if (keyUp == IntPtr.Zero) return false;
+        if (keyUp == IntPtr.Zero)
+        {
+            LastError = $"cg_keyup_null:vkey={virtualKeyCode}";
+            return false;
+        }
 
         CGEventSetFlags(keyUp, modifierFlags);
         CGEventPost(0, keyUp);
