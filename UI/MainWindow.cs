@@ -2341,6 +2341,10 @@ namespace SharpKVM
                         var code = (KeyCode)p.KeyCode;
                         bool isKeyDown = p.Type == PacketType.KeyDown;
                         bool isDiagnosticKey = IsMacInputDiagnosticKey(code);
+                        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                        {
+                            Log($"[MacInput][RX] packet={p.Type} code={code}");
+                        }
 
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                         {
@@ -2422,7 +2426,11 @@ namespace SharpKVM
                         }
                         break;
                 }
-            } catch {}
+            }
+            catch (Exception ex)
+            {
+                Log($"[SimulateInput][Error] {ex.GetType().Name}: {ex.Message}");
+            }
         }
     }
     
