@@ -160,8 +160,14 @@ namespace SharpKVM
 
         private void BroadcastClipboard(string text)
         {
-            if (_isServerRunning) foreach (var client in _connectedClients) client.SendClipboardPacket(text);
-            else if (_isClientRunning) SendClientData(PacketType.Clipboard, Encoding.UTF8.GetBytes(text));
+            if (_isServerRunning)
+            {
+                foreach (var client in GetConnectedClientsSnapshot()) client.SendClipboardPacket(text);
+            }
+            else if (_isClientRunning)
+            {
+                SendClientData(PacketType.Clipboard, Encoding.UTF8.GetBytes(text));
+            }
         }
 
         private void BroadcastFiles(List<string> filePaths)
@@ -179,8 +185,14 @@ namespace SharpKVM
                         byte[] zipBytes = ms.ToArray();
                         if (zipBytes.Length > 0)
                         {
+                            if (!ProtocolPayloadLimits.IsValidPayloadLength(PacketType.ClipboardFile, zipBytes.Length))
+                            {
+                                Dispatcher.UIThread.Post(() => Log($"File clipboard payload is too large: {zipBytes.Length} bytes."));
+                                return;
+                            }
+
                             Dispatcher.UIThread.Post(() => Log($"Sending {filePaths.Count} files..."));
-                            if (_isServerRunning) foreach (var client in _connectedClients) client.SendFilePacket(zipBytes);
+                            if (_isServerRunning) foreach (var client in GetConnectedClientsSnapshot()) client.SendFilePacket(zipBytes);
                             else if (_isClientRunning) SendClientData(PacketType.ClipboardFile, zipBytes);
                         }
                     }
@@ -191,13 +203,20 @@ namespace SharpKVM
 
         private void BroadcastImage(byte[] imgData)
         {
-            if (_isServerRunning) foreach (var client in _connectedClients) client.SendImagePacket(imgData);
+            if (_isServerRunning) foreach (var client in GetConnectedClientsSnapshot()) client.SendImagePacket(imgData);
             else if (_isClientRunning) SendClientData(PacketType.ClipboardImage, imgData);
         }
 
         private void SendClientData(PacketType type, byte[] data)
         {
-            if (_currentClientSocket != null && _currentClientSocket.Connected)
+            if (!ProtocolPayloadLimits.IsValidPayloadLength(type, data.Length))
+            {
+                Dispatcher.UIThread.Post(() => Log($"Outbound payload rejected ({type}, {data.Length} bytes)."));
+                return;
+            }
+
+            var socket = _currentClientSocket;
+            if (socket != null && socket.Connected)
             {
                 _ = Task.Run(() =>
                 {
@@ -205,9 +224,9 @@ namespace SharpKVM
                     {
                         InputPacket p = new InputPacket { Type = type, X = data.Length };
                         byte[] arr = InputPacketSerializer.Serialize(p);
-                        lock (_currentClientSocket)
+                        lock (socket)
                         {
-                            var stream = _currentClientSocket.GetStream(); stream.Write(arr, 0, arr.Length); stream.Write(data, 0, data.Length);
+                            var stream = socket.GetStream(); stream.Write(arr, 0, arr.Length); stream.Write(data, 0, data.Length);
                         }
                     }
                     catch { }

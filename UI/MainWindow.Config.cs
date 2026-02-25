@@ -86,7 +86,7 @@ namespace SharpKVM
             {
                 string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CLIENT_CONFIG_FILENAME);
                 var lines = new List<string>();
-                foreach (var client in _connectedClients)
+                foreach (var client in GetConnectedClientsSnapshot())
                 {
                     string ip = GetClientKey(client);
                     if (!_clientConfigs.ContainsKey(ip)) _clientConfigs[ip] = new ClientConfig { IP = ip };

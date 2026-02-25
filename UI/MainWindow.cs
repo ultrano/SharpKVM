@@ -58,6 +58,7 @@ namespace SharpKVM
 
         private TcpListener? _serverListener;
         private List<ClientHandler> _connectedClients = new List<ClientHandler>();
+        private readonly object _connectedClientsLock = new object();
         private Dictionary<string, ClientLayout> _clientLayouts = new Dictionary<string, ClientLayout>();
         private Dictionary<string, Border> _clientBoxes = new Dictionary<string, Border>();
         private List<ScreenInfo> _cachedScreens = new List<ScreenInfo>();
@@ -324,13 +325,18 @@ namespace SharpKVM
         }
         
         public void ProcessReceivedFiles(byte[] zipData) {
+            if (!ProtocolPayloadLimits.IsValidPayloadLength(PacketType.ClipboardFile, zipData.Length))
+            {
+                Log("Recv File payload rejected (size limit).");
+                return;
+            }
+
             Dispatcher.UIThread.Post(async () => {
                 try {
                     string saveDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
                     if (Directory.Exists(saveDir)) Directory.Delete(saveDir, true);
                     Directory.CreateDirectory(saveDir);
-                    using (var ms = new MemoryStream(zipData)) using (var archive = new ZipArchive(ms, ZipArchiveMode.Read)) { archive.ExtractToDirectory(saveDir); }
-                    var files = Directory.GetFiles(saveDir).ToList();
+                    var files = ExtractClipboardZipSafely(zipData, saveDir);
                     
                     string newHash = string.Join("|", files);
                     _lastRecvFileHash = newHash;
@@ -350,8 +356,67 @@ namespace SharpKVM
                             if (_isServerRunning && _isRemoteActive) TrySyncClipboardToRemote();
                         }
                     }
-                } catch {}
+                } catch (Exception ex) { Log($"File Recv Error: {ex.Message}"); }
             });
+        }
+
+        private static List<string> ExtractClipboardZipSafely(byte[] zipData, string saveDir)
+        {
+            const long maxExtractedBytes = 500L * 1024 * 1024;
+            long totalExtractedBytes = 0;
+            var extractedFiles = new List<string>();
+
+            string root = Path.GetFullPath(saveDir);
+            if (!root.EndsWith(Path.DirectorySeparatorChar))
+            {
+                root += Path.DirectorySeparatorChar;
+            }
+            var pathComparison = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
+            using var ms = new MemoryStream(zipData);
+            using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+            foreach (var entry in archive.Entries)
+            {
+                if (string.IsNullOrWhiteSpace(entry.FullName))
+                {
+                    continue;
+                }
+
+                totalExtractedBytes += Math.Max(0, entry.Length);
+                if (totalExtractedBytes > maxExtractedBytes)
+                {
+                    throw new InvalidDataException("Clipboard file archive exceeded extraction size limit.");
+                }
+
+                string normalizedEntryName = entry.FullName.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+                string destinationPath = Path.GetFullPath(Path.Combine(saveDir, normalizedEntryName));
+                if (!destinationPath.StartsWith(root, pathComparison))
+                {
+                    throw new InvalidDataException($"Invalid zip entry path: {entry.FullName}");
+                }
+
+                bool isDirectory = entry.FullName.EndsWith("/", StringComparison.Ordinal) || entry.FullName.EndsWith("\\", StringComparison.Ordinal);
+                if (isDirectory)
+                {
+                    Directory.CreateDirectory(destinationPath);
+                    continue;
+                }
+
+                string? destinationDirectory = Path.GetDirectoryName(destinationPath);
+                if (!string.IsNullOrEmpty(destinationDirectory))
+                {
+                    Directory.CreateDirectory(destinationDirectory);
+                }
+
+                using var entryStream = entry.Open();
+                using var output = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                entryStream.CopyTo(output);
+                extractedFiles.Add(destinationPath);
+            }
+
+            return extractedFiles;
         }
 
         private void UpdateScreenCache() {
@@ -514,9 +579,51 @@ namespace SharpKVM
 
         private string GetClientKey(ClientHandler client) => client.Name.Replace("Client-", "");
 
+        private List<ClientHandler> GetConnectedClientsSnapshot()
+        {
+            lock (_connectedClientsLock)
+            {
+                return _connectedClients.ToList();
+            }
+        }
+
+        private void AddConnectedClient(ClientHandler client)
+        {
+            lock (_connectedClientsLock)
+            {
+                _connectedClients.Add(client);
+            }
+        }
+
+        private bool RemoveConnectedClient(ClientHandler client)
+        {
+            lock (_connectedClientsLock)
+            {
+                return _connectedClients.Remove(client);
+            }
+        }
+
+        private void CloseAndClearConnectedClients()
+        {
+            List<ClientHandler> snapshot;
+            lock (_connectedClientsLock)
+            {
+                snapshot = _connectedClients.ToList();
+                _connectedClients.Clear();
+            }
+
+            foreach (var client in snapshot)
+            {
+                client.Close();
+            }
+        }
+
         private ClientHandler? GetClientByKey(string key)
         {
-            return _connectedClients.FirstOrDefault(c => GetClientKey(c) == key);
+            lock (_connectedClientsLock)
+            {
+                return _connectedClients.FirstOrDefault(c => GetClientKey(c) == key);
+            }
         }
 
         private Size GetNaturalStageSize(ClientHandler client)
@@ -902,7 +1009,7 @@ namespace SharpKVM
 
         private void ApplyLayoutModeToPlacedClients()
         {
-            foreach (var client in _connectedClients)
+            foreach (var client in GetConnectedClientsSnapshot())
             {
                 string key = GetClientKey(client);
                 if (!_clientLayouts.TryGetValue(key, out var layout) || !layout.IsPlaced) continue;
@@ -1266,8 +1373,7 @@ namespace SharpKVM
 
             _serverListener?.Stop(); _hook?.Dispose();
             CursorManager.Show(); CursorManager.Unlock(); 
-            _connectedClients.ForEach(c => c.Close());
-            _connectedClients.Clear();
+            CloseAndClearConnectedClients();
             _clientBoxes.Clear();
             _clientLayouts.Clear();
             _btnStartServer.Content = "Start Server"; _lblServerInfo.Text = "Status: Stopped";
@@ -1317,7 +1423,7 @@ namespace SharpKVM
                     handler.Disconnected += (h) => {
                         if (h is ClientHandler ch) {
                             Dispatcher.UIThread.Post(() => {
-                                _connectedClients.Remove(ch); Log($"Client {ch.Name} disconnected.");
+                                RemoveConnectedClient(ch); Log($"Client {ch.Name} disconnected.");
                                 string key = GetClientKey(ch);
                                 if (_clientBoxes.TryGetValue(key, out var box))
                                 {
@@ -1332,7 +1438,7 @@ namespace SharpKVM
                         }
                     };
                     if (await handler.HandshakeAsync()) {
-                        _connectedClients.Add(handler); handler.StartReading(); 
+                        AddConnectedClient(handler); handler.StartReading(); 
                         Dispatcher.UIThread.Post(() => { AddClientToDock(handler); Log($"Client Connected: {handler.Width}x{handler.Height}"); });
                     } else { handler.Close(); }
                 } catch {}
@@ -1853,6 +1959,35 @@ namespace SharpKVM
             } 
         }
 
+        private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, int size)
+        {
+            int totalRead = 0;
+            while (totalRead < size)
+            {
+                int read = await stream.ReadAsync(buffer, totalRead, size - totalRead);
+                if (read == 0) return false;
+                totalRead += read;
+            }
+
+            return true;
+        }
+
+        private static async Task<byte[]?> ReadPayloadAsync(NetworkStream stream, PacketType type, int length)
+        {
+            if (!ProtocolPayloadLimits.IsValidPayloadLength(type, length))
+            {
+                return null;
+            }
+
+            byte[] payload = new byte[length];
+            if (!await ReadExactAsync(stream, payload, length))
+            {
+                return null;
+            }
+
+            return payload;
+        }
+
         private async void ToggleClientConnection(object? s, RoutedEventArgs e) { if (_isClientRunning) StopClient(); else await StartClientLoop(); }
         private void StopClient() {
             _isClientRunning = false;
@@ -1916,17 +2051,23 @@ namespace SharpKVM
                             int packetSize = Marshal.SizeOf<InputPacket>();
                             var buffer = new byte[packetSize];
                             while (_isClientRunning) {
-                                int read = await stream.ReadAsync(buffer, 0, buffer.Length);
-                                if (read == 0) throw new Exception("Disconnected"); 
+                                if (!await ReadExactAsync(stream, buffer, buffer.Length)) throw new Exception("Disconnected");
                                 if (!InputPacketSerializer.TryDeserialize(buffer, out InputPacket p)) continue;
                                 if (p.Type == PacketType.Clipboard) {
-                                    int len = p.X; if (len > 0) { byte[] textBytes = new byte[len]; int totalRead = 0; while(totalRead < len) { int r = await stream.ReadAsync(textBytes, totalRead, len - totalRead); if(r==0) break; totalRead += r; } string text = Encoding.UTF8.GetString(textBytes); SetRemoteClipboard(text); }
+                                    var textBytes = await ReadPayloadAsync(stream, PacketType.Clipboard, p.X);
+                                    if (textBytes == null) throw new Exception("Invalid clipboard payload.");
+                                    string text = Encoding.UTF8.GetString(textBytes);
+                                    SetRemoteClipboard(text);
                                 } 
                                 else if (p.Type == PacketType.ClipboardFile) {
-                                    int len = p.X; if (len > 0) { byte[] fileBytes = new byte[len]; int totalRead = 0; while (totalRead < len) { int r = await stream.ReadAsync(fileBytes, totalRead, len - totalRead); if (r == 0) break; totalRead += r; } ProcessReceivedFiles(fileBytes); }
+                                    var fileBytes = await ReadPayloadAsync(stream, PacketType.ClipboardFile, p.X);
+                                    if (fileBytes == null) throw new Exception("Invalid file payload.");
+                                    ProcessReceivedFiles(fileBytes);
                                 }
                                 else if (p.Type == PacketType.ClipboardImage) {
-                                    int len = p.X; if (len > 0) { byte[] imgBytes = new byte[len]; int totalRead = 0; while (totalRead < len) { int r = await stream.ReadAsync(imgBytes, totalRead, len - totalRead); if (r == 0) break; totalRead += r; } ProcessReceivedImage(imgBytes); }
+                                    var imgBytes = await ReadPayloadAsync(stream, PacketType.ClipboardImage, p.X);
+                                    if (imgBytes == null) throw new Exception("Invalid image payload.");
+                                    ProcessReceivedImage(imgBytes);
                                 }
                                 else { 
                                      SimulateInput(p); // [??륁젟] MainWindow 筌롫뗄苑???紐꾪뀱

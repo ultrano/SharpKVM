@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SharpKVM
@@ -11,24 +12,25 @@ namespace SharpKVM
     {
         public TcpClient Socket;
         public string Name;
-        private NetworkStream _stream;
+        private readonly NetworkStream _stream;
         public int Width { get; private set; } = 1920;
         public int Height { get; private set; } = 1080;
         public bool IsMac { get; private set; } = false;
         public event Action<object>? Disconnected;
-        
-        public double Sensitivity { get; set; } = 3.0;
-        public double WheelSensitivity { get; set; } = 1.0; 
 
-        private BlockingCollection<byte[]> _sendQueue = new BlockingCollection<byte[]>();
-        private readonly MainWindow _ownerWindow; 
+        public double Sensitivity { get; set; } = 3.0;
+        public double WheelSensitivity { get; set; } = 1.0;
+
+        private readonly BlockingCollection<byte[]> _sendQueue = new BlockingCollection<byte[]>();
+        private readonly MainWindow _ownerWindow;
+        private int _isClosed;
 
         public ClientHandler(TcpClient s, MainWindow parent)
         {
             Socket = s;
             _stream = s.GetStream();
             _ownerWindow = parent;
-            Name = "Client-" + ((IPEndPoint)s.Client.RemoteEndPoint!).Address.ToString();
+            Name = "Client-" + ((IPEndPoint)s.Client.RemoteEndPoint!).Address;
             Task.Run(SendingLoop);
         }
 
@@ -38,6 +40,7 @@ namespace SharpKVM
             {
                 foreach (var data in _sendQueue.GetConsumingEnumerable())
                 {
+                    if (Volatile.Read(ref _isClosed) == 1) break;
                     if (!_stream.CanWrite) break;
                     _stream.Write(data, 0, data.Length);
                 }
@@ -48,106 +51,103 @@ namespace SharpKVM
             }
         }
 
+        private async Task<bool> ReadExactAsync(byte[] buffer, int size)
+        {
+            int totalRead = 0;
+            while (totalRead < size)
+            {
+                int bytesRead = await _stream.ReadAsync(buffer, totalRead, size - totalRead).ConfigureAwait(false);
+                if (bytesRead == 0) return false;
+                totalRead += bytesRead;
+            }
+
+            return true;
+        }
+
+        private async Task<byte[]?> ReadPayloadAsync(PacketType type, int length)
+        {
+            if (!ProtocolPayloadLimits.IsValidPayloadLength(type, length))
+            {
+                return null;
+            }
+
+            byte[] payload = new byte[length];
+            if (!await ReadExactAsync(payload, length).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            return payload;
+        }
+
         public async Task<bool> HandshakeAsync()
         {
             try
             {
                 int size = System.Runtime.InteropServices.Marshal.SizeOf<InputPacket>();
                 byte[] buffer = new byte[size];
-                int bytesRead = await _stream.ReadAsync(buffer, 0, size);
-                if (bytesRead != size) return false;
+                if (!await ReadExactAsync(buffer, size).ConfigureAwait(false)) return false;
 
                 if (!InputPacketSerializer.TryDeserialize(buffer, out InputPacket p)) return false;
-                
+
                 if (p.Type == PacketType.Hello)
                 {
-                    this.Width = p.X;
-                    this.Height = p.Y;
+                    if (p.X <= 0 || p.Y <= 0) return false;
+                    Width = p.X;
+                    Height = p.Y;
                     return true;
                 }
             }
             catch { }
+
             return false;
         }
 
         public void StartReading()
         {
-            var owner = _ownerWindow; 
+            var owner = _ownerWindow;
 
             _ = Task.Run(async () =>
             {
-                byte[] buff = new byte[System.Runtime.InteropServices.Marshal.SizeOf<InputPacket>()];
+                byte[] buffer = new byte[System.Runtime.InteropServices.Marshal.SizeOf<InputPacket>()];
                 try
                 {
                     while (true)
                     {
-                        int read = await _stream.ReadAsync(buff, 0, buff.Length);
-                        if (read == 0) break;
+                        if (!await ReadExactAsync(buffer, buffer.Length).ConfigureAwait(false)) break;
 
-                        if (!InputPacketSerializer.TryDeserialize(buff, out InputPacket p)) continue;
+                        if (!InputPacketSerializer.TryDeserialize(buffer, out InputPacket packet)) continue;
 
-                        if (p.Type == PacketType.Clipboard)
+                        if (packet.Type == PacketType.Clipboard)
                         {
-                            int len = p.X;
-                            if (len > 0)
-                            {
-                                byte[] textBytes = new byte[len];
-                                int totalRead = 0;
-                                while (totalRead < len)
-                                {
-                                    int r = await _stream.ReadAsync(textBytes, totalRead, len - totalRead);
-                                    if (r == 0) break;
-                                    totalRead += r;
-                                }
-                                string text = Encoding.UTF8.GetString(textBytes);
-                                
-                                owner.SetRemoteClipboard(text); 
-                            }
+                            var textBytes = await ReadPayloadAsync(PacketType.Clipboard, packet.X).ConfigureAwait(false);
+                            if (textBytes == null) break;
+
+                            string text = Encoding.UTF8.GetString(textBytes);
+                            owner.SetRemoteClipboard(text);
                         }
-                        else if (p.Type == PacketType.PlatformInfo)
+                        else if (packet.Type == PacketType.PlatformInfo)
                         {
-                            this.IsMac = (p.KeyCode == 1);
+                            IsMac = (packet.KeyCode == 1);
                         }
-                        else if (p.Type == PacketType.ClipboardFile)
+                        else if (packet.Type == PacketType.ClipboardFile)
                         {
-                            int len = p.X;
-                            if (len > 0)
-                            {
-                                byte[] fileBytes = new byte[len];
-                                int totalRead = 0;
-                                while (totalRead < len)
-                                {
-                                    int r = await _stream.ReadAsync(fileBytes, totalRead, len - totalRead);
-                                    if (r == 0) break;
-                                    totalRead += r;
-                                }
-                                owner.ProcessReceivedFiles(fileBytes); 
-                            }
+                            var fileBytes = await ReadPayloadAsync(PacketType.ClipboardFile, packet.X).ConfigureAwait(false);
+                            if (fileBytes == null) break;
+
+                            owner.ProcessReceivedFiles(fileBytes);
                         }
-                        else if (p.Type == PacketType.ClipboardImage)
+                        else if (packet.Type == PacketType.ClipboardImage)
                         {
-                            int len = p.X;
-                            if (len > 0)
-                            {
-                                byte[] imgBytes = new byte[len];
-                                int totalRead = 0;
-                                while (totalRead < len)
-                                {
-                                    int r = await _stream.ReadAsync(imgBytes, totalRead, len - totalRead);
-                                    if (r == 0) break;
-                                    totalRead += r;
-                                }
-                                owner.ProcessReceivedImage(imgBytes);
-                            }
-                        }
-                        else 
-                        {
-                            // ??곗뺘 ??낆젾 ???땅 (筌띾뜆??????? 獄쏅뗀以?筌ｌ꼶??
-                            // [?醫됲뇣] ?????곷섧??筌잛럩肉??뺣즲 ???땅 筌ｌ꼶??筌ㅼ뮇???(?袁⑹뒄??
+                            var imageBytes = await ReadPayloadAsync(PacketType.ClipboardImage, packet.X).ConfigureAwait(false);
+                            if (imageBytes == null) break;
+
+                            owner.ProcessReceivedImage(imageBytes);
                         }
                     }
                 }
                 catch { }
+
                 Disconnected?.Invoke(this);
             });
         }
@@ -155,32 +155,55 @@ namespace SharpKVM
         public void SendClipboardPacket(string text)
         {
             byte[] bytes = Encoding.UTF8.GetBytes(text);
+            if (!ProtocolPayloadLimits.IsValidPayloadLength(PacketType.Clipboard, bytes.Length)) return;
+
             SendPacketAsync(new InputPacket { Type = PacketType.Clipboard, X = bytes.Length });
-            _sendQueue.Add(bytes);
+            TryEnqueue(bytes);
         }
 
         public void SendFilePacket(byte[] data)
         {
+            if (!ProtocolPayloadLimits.IsValidPayloadLength(PacketType.ClipboardFile, data.Length)) return;
+
             SendPacketAsync(new InputPacket { Type = PacketType.ClipboardFile, X = data.Length });
-            _sendQueue.Add(data);
+            TryEnqueue(data);
         }
 
         public void SendImagePacket(byte[] data)
         {
+            if (!ProtocolPayloadLimits.IsValidPayloadLength(PacketType.ClipboardImage, data.Length)) return;
+
             SendPacketAsync(new InputPacket { Type = PacketType.ClipboardImage, X = data.Length });
-            _sendQueue.Add(data);
+            TryEnqueue(data);
+        }
+
+        private bool TryEnqueue(byte[] data)
+        {
+            if (Volatile.Read(ref _isClosed) == 1) return false;
+
+            try
+            {
+                _sendQueue.Add(data);
+                return true;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
         }
 
         public void SendPacketAsync(InputPacket p)
         {
             byte[] arr = InputPacketSerializer.Serialize(p);
-            _sendQueue.Add(arr);
+            TryEnqueue(arr);
         }
 
         public void Close()
         {
-            _sendQueue.CompleteAdding();
-            Socket.Close();
+            if (Interlocked.Exchange(ref _isClosed, 1) == 1) return;
+
+            try { _sendQueue.CompleteAdding(); } catch { }
+            try { Socket.Close(); } catch { }
         }
     }
 }
