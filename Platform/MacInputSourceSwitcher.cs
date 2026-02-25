@@ -5,6 +5,8 @@ namespace SharpKVM;
 
 public static class MacInputSourceSwitcher
 {
+    private const ushort CapsLockVirtualKeyCode = 57;
+
     [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
     private static extern IntPtr CGEventCreateKeyboardEvent(IntPtr source, ushort virtualKey, bool keyDown);
 
@@ -26,24 +28,46 @@ public static class MacInputSourceSwitcher
 
         try
         {
-            IntPtr keyDown = CGEventCreateKeyboardEvent(IntPtr.Zero, (ushort)hotkey.MacVirtualKeyCode, true);
-            if (keyDown == IntPtr.Zero) return false;
-
-            CGEventSetFlags(keyDown, hotkey.MacModifierFlags);
-            CGEventPost(0, keyDown);
-            CFRelease(keyDown);
-
-            IntPtr keyUp = CGEventCreateKeyboardEvent(IntPtr.Zero, (ushort)hotkey.MacVirtualKeyCode, false);
-            if (keyUp == IntPtr.Zero) return false;
-
-            CGEventSetFlags(keyUp, hotkey.MacModifierFlags);
-            CGEventPost(0, keyUp);
-            CFRelease(keyUp);
-            return true;
+            return ExecuteVirtualKey((ushort)hotkey.MacVirtualKeyCode, hotkey.MacModifierFlags);
         }
         catch
         {
             return false;
         }
+    }
+
+    public static bool ExecuteCapsLockToggle()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return false;
+        }
+
+        try
+        {
+            return ExecuteVirtualKey(CapsLockVirtualKeyCode, 0);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool ExecuteVirtualKey(ushort virtualKeyCode, ulong modifierFlags)
+    {
+        IntPtr keyDown = CGEventCreateKeyboardEvent(IntPtr.Zero, virtualKeyCode, true);
+        if (keyDown == IntPtr.Zero) return false;
+
+        CGEventSetFlags(keyDown, modifierFlags);
+        CGEventPost(0, keyDown);
+        CFRelease(keyDown);
+
+        IntPtr keyUp = CGEventCreateKeyboardEvent(IntPtr.Zero, virtualKeyCode, false);
+        if (keyUp == IntPtr.Zero) return false;
+
+        CGEventSetFlags(keyUp, modifierFlags);
+        CGEventPost(0, keyUp);
+        CFRelease(keyUp);
+        return true;
     }
 }

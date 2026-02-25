@@ -2015,22 +2015,25 @@ namespace SharpKVM
                         Dispatcher.UIThread.Post(() => Log("Connected!"));
                         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                         {
-                            if (MacInputSourceHotkeyProvider.TryLoadWithDiagnostics(out var startupHotkeys, out var diagnostics))
+                            bool loadedHotkeys = MacInputSourceHotkeyProvider.TryLoadWithDiagnostics(out var startupHotkeys, out var diagnostics);
+
+                            if (loadedHotkeys)
                             {
                                 _macInputSourceHotkeys = startupHotkeys;
                                 _lastMacInputSourceHotkeyRefresh = DateTime.UtcNow;
-                                Dispatcher.UIThread.Post(() =>
-                                {
-                                    if (_chkMacCapsLockInputSourceSwitch != null)
-                                    {
-                                        _chkMacCapsLockInputSourceSwitch.IsChecked = diagnostics.IsCapsLockInputSourceSwitchEnabled;
-                                    }
-                                });
                             }
                             else
                             {
                                 _macInputSourceHotkeys = null;
                             }
+
+                            Dispatcher.UIThread.Post(() =>
+                            {
+                                if (_chkMacCapsLockInputSourceSwitch != null)
+                                {
+                                    _chkMacCapsLockInputSourceSwitch.IsChecked = diagnostics.IsCapsLockInputSourceSwitchEnabled;
+                                }
+                            });
 
                             Dispatcher.UIThread.Post(() => Log(
                                 $"Mac InputSource: status={diagnostics.Status}, capslock_option={diagnostics.IsCapsLockInputSourceSwitchEnabled}, option_source={diagnostics.CapsLockOptionSource}, raw_option_key={diagnostics.RawOptionKey}, raw_option_value={diagnostics.RawOptionValue}, primary=[{diagnostics.PrimarySummary}], secondary=[{diagnostics.SecondarySummary}], details={diagnostics.Details}"));
@@ -2122,6 +2125,18 @@ namespace SharpKVM
 
         private bool TryHandleMacInputSourceHotkey(KeyCode triggerKey)
         {
+            if (triggerKey == KeyCode.VcCapsLock && IsMacCapsLockInputSourceSwitchEnabled())
+            {
+                var modifierMask = MacInputSourceHotkeyMapper.ToModifierMask(_remotePressedKeys, triggerKey);
+                if (modifierMask == MacModifierMask.None)
+                {
+                    if (!MacInputSourceSwitcher.ExecuteCapsLockToggle()) return false;
+                    ConsumeRemotePressedKeysForInputSourceHotkey();
+                    Log("Input Source Hotkey Triggered (CapsLock)");
+                    return true;
+                }
+            }
+
             if (_macInputSourceHotkeys == null) return false;
 
             foreach (var hotkey in _macInputSourceHotkeys.Enumerate())
@@ -2129,21 +2144,25 @@ namespace SharpKVM
                 if (!hotkey.Matches(_remotePressedKeys, triggerKey)) continue;
                 if (hotkey.IsCapsLockPlainSwitch && !IsMacCapsLockInputSourceSwitchEnabled()) continue;
                 if (!MacInputSourceSwitcher.Execute(hotkey)) return false;
-
-                foreach (var key in _remotePressedKeys)
-                {
-                    _consumedInputSourceKeys.Add(key);
-                    if (_forwardedRemoteKeys.Remove(key))
-                    {
-                        _simulator?.SimulateKeyRelease(key);
-                    }
-                }
+                ConsumeRemotePressedKeysForInputSourceHotkey();
 
                 Log($"Input Source Hotkey Triggered ({hotkey.SymbolicHotkeyId})");
                 return true;
             }
 
             return false;
+        }
+
+        private void ConsumeRemotePressedKeysForInputSourceHotkey()
+        {
+            foreach (var key in _remotePressedKeys)
+            {
+                _consumedInputSourceKeys.Add(key);
+                if (_forwardedRemoteKeys.Remove(key))
+                {
+                    _simulator?.SimulateKeyRelease(key);
+                }
+            }
         }
 
         private bool IsMacCapsLockInputSourceSwitchEnabled()
