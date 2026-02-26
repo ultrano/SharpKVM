@@ -4,12 +4,12 @@ namespace SharpKVM
 {
     public class SnapSlot
     {
-        public string ID;
-        public Rect Rect;
-        public string ParentID;
-        public string Direction;
+        public string ID { get; }
+        public Rect Rect { get; }
+        public string ParentID { get; }
+        public EdgeDirection Direction { get; }
 
-        public SnapSlot(string id, Rect r, string pid, string dir)
+        public SnapSlot(string id, Rect r, string pid, EdgeDirection dir)
         {
             ID = id;
             Rect = r;

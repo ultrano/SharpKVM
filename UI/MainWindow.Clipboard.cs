@@ -53,7 +53,7 @@ namespace SharpKVM
                                     }
                                 });
                             }
-                        });
+                        }).ContinueWith(t => Dispatcher.UIThread.Post(() => Log($"ClipboardImage task failed: {t.Exception?.GetBaseException().Message}")), TaskContinuationOptions.OnlyOnFaulted);
                         return;
                     }
 
@@ -93,7 +93,7 @@ namespace SharpKVM
                     }
                 });
             }
-            catch { }
+            catch (Exception ex) { Log($"CheckClipboard failed: {ex.Message}"); }
         }
 
         private void SyncClientClipboardToServer()
@@ -197,7 +197,7 @@ namespace SharpKVM
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex) { Dispatcher.UIThread.Post(() => Log($"BroadcastFiles failed: {ex.Message}")); }
             });
         }
 
@@ -229,7 +229,7 @@ namespace SharpKVM
                             var stream = socket.GetStream(); stream.Write(arr, 0, arr.Length); stream.Write(data, 0, data.Length);
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Dispatcher.UIThread.Post(() => Log($"SendClientData failed: {ex.Message}")); }
                 });
             }
         }

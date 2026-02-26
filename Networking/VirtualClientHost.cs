@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -42,7 +43,8 @@ namespace SharpKVM
                 _cts = new CancellationTokenSource();
             }
 
-            _ = Task.Run(() => RunAsync(host, port, width, height, isMac));
+            _ = Task.Run(() => RunAsync(host, port, width, height, isMac))
+                .ContinueWith(t => Debug.WriteLine($"[SharpKVM] VirtualClient task failed: {t.Exception?.GetBaseException().Message}"), TaskContinuationOptions.OnlyOnFaulted);
             return true;
         }
 

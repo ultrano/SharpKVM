@@ -34,8 +34,45 @@ namespace SharpKVM
         private const string CONFIG_FILENAME = "server_ip.txt"; 
         private const string CLIENT_CONFIG_FILENAME = "client_config.txt"; 
 
-        private const double BASE_BOX_HEIGHT = 50; 
+        private const double BASE_BOX_HEIGHT = 50;
         private const double SLOT_GAP = 5;
+
+        // Timing thresholds
+        private const int DOUBLE_CLICK_THRESHOLD_MS = 500;
+        private const int MOUSE_SENDER_INTERVAL_MS = 5;
+        private const int CLIPBOARD_POLL_INTERVAL_MS = 2000;
+        private const int CLIENT_RECONNECT_DELAY_MS = 3000;
+        private const int CLIPBOARD_PASTE_DELAY_MS = 100;
+        private const int MAC_SHORTCUT_COOLDOWN_MS = 200;
+        private const int MAC_HOTKEY_REFRESH_INTERVAL_SEC = 10;
+        private const int MAC_ACCESSIBILITY_LOG_INTERVAL_SEC = 10;
+
+        // Distance / size thresholds
+        private const double ATTACH_TARGET_MAX_DISTANCE = 1200;
+        private const double NEIGHBOR_MAX_DISTANCE = 1400;
+        private const int LARGE_DELTA_THRESHOLD = 500;
+        private const int ACCELERATION_THRESHOLD = 10;
+        private const double ACCELERATION_FACTOR = 1.1;
+        private const double SNAP_SLOT_THICKNESS = 20;
+        private const double SNAP_DISTANCE_THRESHOLD = 100;
+        private const double VIEWPORT_PADDING = 40;
+        private const double PERPENDICULAR_OVERLAP_MIN = 8;
+        private const double EDGE_TOLERANCE = 1.0;
+        private const double FREE_OVERLAP_DEFAULT_GAP = 6;
+        private const int FREE_OVERLAP_MAX_ITERATIONS = 40;
+
+        // Edge buffer for cursor detection
+        private const int EDGE_BUFFER_MIN = 5;
+        private const int EDGE_BUFFER_MAX = 30;
+        private const double EDGE_BUFFER_SCREEN_RATIO = 0.01;
+        private const int RETURN_CURSOR_BUFFER = 10;
+
+        // Log limits
+        private const int MAX_LOG_LINES = 500;
+        private const int MAX_LOG_TEXT_LENGTH = 50000;
+
+        // Zip extraction safety
+        private const long MAX_ZIP_EXTRACTED_BYTES = 500L * 1024 * 1024;
 
         private TabControl _tabControl = null!;
         private Canvas _pnlStage = null!;
@@ -166,8 +203,9 @@ namespace SharpKVM
             this.SizeChanged += (s, e) => DrawVisualLayout();
             this.Closing += (s, e) => { StopServer(); StopClient(); CursorManager.Show(); CursorManager.Unlock(); SaveConfig(); };
 
-            _clipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2000) }; 
-            _clipboardTimer.Tick += (s,e) => _ = Task.Run(() => CheckClipboard()); 
+            _clipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(CLIPBOARD_POLL_INTERVAL_MS) }; 
+            _clipboardTimer.Tick += (s,e) => _ = Task.Run(() => CheckClipboard())
+                .ContinueWith(t => Dispatcher.UIThread.Post(() => Log($"ClipboardTimer task failed: {t.Exception?.GetBaseException().Message}")), TaskContinuationOptions.OnlyOnFaulted);
             _clipboardTimer.Start();
             Log($"Diagnostic log file: {_diagnosticLogPath}");
         }
@@ -287,6 +325,14 @@ namespace SharpKVM
             Dispatcher.UIThread.Post(() =>
             {
                 _txtLog.Text += $"{line}\n";
+                if (_txtLog.Text.Length > MAX_LOG_TEXT_LENGTH)
+                {
+                    var lines = _txtLog.Text.Split('\n');
+                    if (lines.Length > MAX_LOG_LINES)
+                    {
+                        _txtLog.Text = string.Join("\n", lines.AsSpan(lines.Length - MAX_LOG_LINES).ToArray());
+                    }
+                }
                 _txtLog.CaretIndex = _txtLog.Text.Length;
             });
 
@@ -302,8 +348,9 @@ namespace SharpKVM
                     File.AppendAllText(_diagnosticLogPath, line + Environment.NewLine);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Debug.WriteLine($"[SharpKVM] Log write failed: {ex.Message}");
             }
         }
 
@@ -414,7 +461,7 @@ namespace SharpKVM
 
         private static List<string> ExtractClipboardZipSafely(byte[] zipData, string saveDir)
         {
-            const long maxExtractedBytes = 500L * 1024 * 1024;
+            long maxExtractedBytes = MAX_ZIP_EXTRACTED_BYTES;
             long totalExtractedBytes = 0;
             var extractedFiles = new List<string>();
 
@@ -492,7 +539,7 @@ namespace SharpKVM
             _pnlStage.Children.Clear();
             _snapSlots.Clear();
 
-            double thickness = 20;
+            double thickness = SNAP_SLOT_THICKNESS;
             foreach(var s in _cachedScreens) {
                 var uiRect = DesktopToStage(s.Bounds);
                 double x = uiRect.X;
@@ -503,10 +550,10 @@ namespace SharpKVM
                 var border = new Border { Width = w, Height = h, Background = Brushes.SteelBlue, BorderBrush = Brushes.White, BorderThickness = new Thickness(2), Child = new TextBlock { Text = $"{s.ID}\n{s.Bounds.Width}x{s.Bounds.Height}", Foreground=Brushes.White, HorizontalAlignment=HorizontalAlignment.Center, VerticalAlignment=VerticalAlignment.Center, FontSize=10 } };
                 Canvas.SetLeft(border, x); Canvas.SetTop(border, y);
                 _pnlStage.Children.Add(border);
-                _snapSlots.Add(new SnapSlot(s.ID + "_Left", new Rect(x - thickness, y, thickness, h), s.ID, "Left"));
-                _snapSlots.Add(new SnapSlot(s.ID + "_Right", new Rect(x + w, y, thickness, h), s.ID, "Right"));
-                _snapSlots.Add(new SnapSlot(s.ID + "_Top", new Rect(x, y - thickness, w, thickness), s.ID, "Top"));
-                _snapSlots.Add(new SnapSlot(s.ID + "_Bottom", new Rect(x, y + h, w, thickness), s.ID, "Bottom"));
+                _snapSlots.Add(new SnapSlot(s.ID + "_Left", new Rect(x - thickness, y, thickness, h), s.ID, EdgeDirection.Left));
+                _snapSlots.Add(new SnapSlot(s.ID + "_Right", new Rect(x + w, y, thickness, h), s.ID, EdgeDirection.Right));
+                _snapSlots.Add(new SnapSlot(s.ID + "_Top", new Rect(x, y - thickness, w, thickness), s.ID, EdgeDirection.Top));
+                _snapSlots.Add(new SnapSlot(s.ID + "_Bottom", new Rect(x, y + h, w, thickness), s.ID, EdgeDirection.Bottom));
             }
 
             RedrawClientBoxes();
@@ -539,7 +586,7 @@ namespace SharpKVM
             double totalH = Math.Max(1, maxY - minY);
             double stageW = _pnlStage.Bounds.Width, stageH = _pnlStage.Bounds.Height;
             if(stageW <= 0) return;
-            double padding = 40;
+            double padding = VIEWPORT_PADDING;
             double scale = Math.Min((stageW - padding*2)/totalW, (stageH - padding*2)/totalH);
             if (double.IsNaN(scale) || double.IsInfinity(scale) || scale <= 0) scale = 0.01;
             double offsetX = (stageW - totalW*scale)/2, offsetY = (stageH - totalH*scale)/2;
@@ -620,14 +667,7 @@ namespace SharpKVM
             );
         }
 
-        private EdgeDirection OppositeEdge(EdgeDirection edge)
-        {
-            if (edge == EdgeDirection.Left) return EdgeDirection.Right;
-            if (edge == EdgeDirection.Right) return EdgeDirection.Left;
-            if (edge == EdgeDirection.Top) return EdgeDirection.Bottom;
-            if (edge == EdgeDirection.Bottom) return EdgeDirection.Top;
-            return EdgeDirection.None;
-        }
+        private static EdgeDirection OppositeEdge(EdgeDirection edge) => LayoutGeometry.OppositeEdge(edge);
 
         private string GetClientKey(ClientHandler client) => client.Name.Replace("Client-", "");
 
@@ -666,7 +706,7 @@ namespace SharpKVM
 
             foreach (var client in snapshot)
             {
-                client.Close();
+                client.Dispose();
             }
         }
 
@@ -694,22 +734,7 @@ namespace SharpKVM
             return new Rect(x, y, rect.Width, rect.Height);
         }
 
-        private Rect ClampRectByAnchor(Rect rect, EdgeDirection anchorEdge)
-        {
-            if (anchorEdge == EdgeDirection.Left || anchorEdge == EdgeDirection.Right)
-            {
-                double y = Math.Clamp(rect.Y, _globalDesktopBounds.Top, Math.Max(_globalDesktopBounds.Top, _globalDesktopBounds.Bottom - rect.Height));
-                return new Rect(rect.X, y, rect.Width, rect.Height);
-            }
-
-            if (anchorEdge == EdgeDirection.Top || anchorEdge == EdgeDirection.Bottom)
-            {
-                double x = Math.Clamp(rect.X, _globalDesktopBounds.Left, Math.Max(_globalDesktopBounds.Left, _globalDesktopBounds.Right - rect.Width));
-                return new Rect(x, rect.Y, rect.Width, rect.Height);
-            }
-
-            return rect;
-        }
+        private Rect ClampRectByAnchor(Rect rect, EdgeDirection anchorEdge) => LayoutGeometry.ClampRectByAnchor(rect, anchorEdge, _globalDesktopBounds);
 
         private double GetDesktopSnapThreshold()
         {
@@ -717,125 +742,19 @@ namespace SharpKVM
             return Math.Max(8, 14 / scale);
         }
 
-        private bool IsHorizontalEdge(EdgeDirection edge) => edge == EdgeDirection.Left || edge == EdgeDirection.Right;
+        private static bool IsHorizontalEdge(EdgeDirection edge) => LayoutGeometry.IsHorizontalEdge(edge);
 
-        private bool HasPerpendicularOverlapForEntry(Rect sourceRect, Rect targetRect, EdgeDirection entryEdge)
-        {
-            if (entryEdge == EdgeDirection.Left || entryEdge == EdgeDirection.Right)
-            {
-                return Overlap1D(sourceRect.Top, sourceRect.Bottom, targetRect.Top, targetRect.Bottom) > 8;
-            }
-            if (entryEdge == EdgeDirection.Top || entryEdge == EdgeDirection.Bottom)
-            {
-                return Overlap1D(sourceRect.Left, sourceRect.Right, targetRect.Left, targetRect.Right) > 8;
-            }
-            return false;
-        }
+        private static bool HasPerpendicularOverlapForEntry(Rect sourceRect, Rect targetRect, EdgeDirection entryEdge) => LayoutGeometry.HasPerpendicularOverlapForEntry(sourceRect, targetRect, entryEdge);
 
-        private bool IsGlobalOuterEdgeDesktop(ScreenInfo screen, EdgeDirection edge)
-        {
-            const double tol = 1.0;
-            if (edge == EdgeDirection.Left) return Math.Abs(screen.Bounds.Left - _globalDesktopBounds.Left) <= tol;
-            if (edge == EdgeDirection.Right) return Math.Abs(screen.Bounds.Right - _globalDesktopBounds.Right) <= tol;
-            if (edge == EdgeDirection.Top) return Math.Abs(screen.Bounds.Top - _globalDesktopBounds.Top) <= tol;
-            if (edge == EdgeDirection.Bottom) return Math.Abs(screen.Bounds.Bottom - _globalDesktopBounds.Bottom) <= tol;
-            return false;
-        }
+        private bool IsGlobalOuterEdgeDesktop(ScreenInfo screen, EdgeDirection edge) => LayoutGeometry.IsGlobalOuterEdge(screen.Bounds, edge, _globalDesktopBounds);
 
-        private double Overlap1D(double a1, double a2, double b1, double b2)
-        {
-            double lo = Math.Max(Math.Min(a1, a2), Math.Min(b1, b2));
-            double hi = Math.Min(Math.Max(a1, a2), Math.Max(b1, b2));
-            return Math.Max(0, hi - lo);
-        }
+        private static double Overlap1D(double a1, double a2, double b1, double b2) => LayoutGeometry.Overlap1D(a1, a2, b1, b2);
 
-        private bool AreEdgesAdjacent(Rect sourceRect, EdgeDirection exitEdge, Rect targetRect, double tolerance)
-        {
-            if (exitEdge == EdgeDirection.Left)
-            {
-                return Math.Abs(sourceRect.Left - targetRect.Right) <= tolerance &&
-                       Overlap1D(sourceRect.Top, sourceRect.Bottom, targetRect.Top, targetRect.Bottom) > 8;
-            }
-            if (exitEdge == EdgeDirection.Right)
-            {
-                return Math.Abs(sourceRect.Right - targetRect.Left) <= tolerance &&
-                       Overlap1D(sourceRect.Top, sourceRect.Bottom, targetRect.Top, targetRect.Bottom) > 8;
-            }
-            if (exitEdge == EdgeDirection.Top)
-            {
-                return Math.Abs(sourceRect.Top - targetRect.Bottom) <= tolerance &&
-                       Overlap1D(sourceRect.Left, sourceRect.Right, targetRect.Left, targetRect.Right) > 8;
-            }
-            if (exitEdge == EdgeDirection.Bottom)
-            {
-                return Math.Abs(sourceRect.Bottom - targetRect.Top) <= tolerance &&
-                       Overlap1D(sourceRect.Left, sourceRect.Right, targetRect.Left, targetRect.Right) > 8;
-            }
-            return false;
-        }
+        private static bool AreEdgesAdjacent(Rect sourceRect, EdgeDirection exitEdge, Rect targetRect, double tolerance) => LayoutGeometry.AreEdgesAdjacent(sourceRect, exitEdge, targetRect, tolerance);
 
-        private Point MapPointAcrossEdge(Point sourcePoint, Rect sourceRect, EdgeDirection exitEdge, Rect targetRect)
-        {
-            if (exitEdge == EdgeDirection.Left || exitEdge == EdgeDirection.Right)
-            {
-                double overlapTop = Math.Max(sourceRect.Top, targetRect.Top);
-                double overlapBottom = Math.Min(sourceRect.Bottom, targetRect.Bottom);
-                double mappedY;
-                if (overlapBottom > overlapTop)
-                {
-                    mappedY = Math.Clamp(sourcePoint.Y, overlapTop, overlapBottom);
-                }
-                else
-                {
-                    double ratio = sourceRect.Height > 0 ? Math.Clamp((sourcePoint.Y - sourceRect.Top) / sourceRect.Height, 0.0, 1.0) : 0.5;
-                    mappedY = targetRect.Top + ratio * targetRect.Height;
-                }
-                double mappedX = exitEdge == EdgeDirection.Left ? targetRect.Right : targetRect.Left;
-                return new Point(mappedX, mappedY);
-            }
+        private static Point MapPointAcrossEdge(Point sourcePoint, Rect sourceRect, EdgeDirection exitEdge, Rect targetRect) => LayoutGeometry.MapPointAcrossEdge(sourcePoint, sourceRect, exitEdge, targetRect);
 
-            double overlapLeft = Math.Max(sourceRect.Left, targetRect.Left);
-            double overlapRight = Math.Min(sourceRect.Right, targetRect.Right);
-            double mappedX2;
-            if (overlapRight > overlapLeft)
-            {
-                mappedX2 = Math.Clamp(sourcePoint.X, overlapLeft, overlapRight);
-            }
-            else
-            {
-                double ratio = sourceRect.Width > 0 ? Math.Clamp((sourcePoint.X - sourceRect.Left) / sourceRect.Width, 0.0, 1.0) : 0.5;
-                mappedX2 = targetRect.Left + ratio * targetRect.Width;
-            }
-            double mappedY2 = exitEdge == EdgeDirection.Top ? targetRect.Bottom : targetRect.Top;
-            return new Point(mappedX2, mappedY2);
-        }
-
-        private Rect AttachToScreenEdge(Rect rect, ScreenInfo screen, EdgeDirection edge)
-        {
-            Rect screenRect = screen.Bounds;
-
-            if (edge == EdgeDirection.Left)
-            {
-                double y = Math.Clamp(rect.Y, screenRect.Top - rect.Height + 8, screenRect.Bottom - 8);
-                return new Rect(screenRect.Left - rect.Width, y, rect.Width, rect.Height);
-            }
-            if (edge == EdgeDirection.Right)
-            {
-                double y = Math.Clamp(rect.Y, screenRect.Top - rect.Height + 8, screenRect.Bottom - 8);
-                return new Rect(screenRect.Right, y, rect.Width, rect.Height);
-            }
-            if (edge == EdgeDirection.Top)
-            {
-                double x = Math.Clamp(rect.X, screenRect.Left - rect.Width + 8, screenRect.Right - 8);
-                return new Rect(x, screenRect.Top - rect.Height, rect.Width, rect.Height);
-            }
-            if (edge == EdgeDirection.Bottom)
-            {
-                double x = Math.Clamp(rect.X, screenRect.Left - rect.Width + 8, screenRect.Right - 8);
-                return new Rect(x, screenRect.Bottom, rect.Width, rect.Height);
-            }
-            return rect;
-        }
+        private static Rect AttachToScreenEdge(Rect rect, ScreenInfo screen, EdgeDirection edge) => LayoutGeometry.AttachToScreenEdge(rect, screen.Bounds, edge);
 
         private (ScreenInfo Screen, EdgeDirection Edge, double Distance) FindNearestScreenEdge(Rect rect)
         {
@@ -977,11 +896,11 @@ namespace SharpKVM
                    a.Bottom > b.Top - gap;
         }
 
-        private Rect ResolveFreeOverlap(Rect rect, string movingClientKey, EdgeDirection anchorEdge, double gap = 6)
+        private Rect ResolveFreeOverlap(Rect rect, string movingClientKey, EdgeDirection anchorEdge, double gap = FREE_OVERLAP_DEFAULT_GAP)
         {
             var candidate = rect;
 
-            for (int i = 0; i < 40; i++)
+            for (int i = 0; i < FREE_OVERLAP_MAX_ITERATIONS; i++)
             {
                 Rect? overlapped = null;
                 foreach (var kv in _clientLayouts)
@@ -1038,7 +957,7 @@ namespace SharpKVM
         {
             double newW = slot.Rect.Width;
             double newH = slot.Rect.Height;
-            if (slot.Direction.EndsWith("Left") || slot.Direction.EndsWith("Right"))
+            if (slot.Direction == EdgeDirection.Left || slot.Direction == EdgeDirection.Right)
             {
                 newH = slot.Rect.Height;
                 newW = newH * ratio;
@@ -1051,10 +970,10 @@ namespace SharpKVM
 
             double finalX = slot.Rect.X;
             double finalY = slot.Rect.Y;
-            if (slot.Direction.EndsWith("Left")) finalX = slot.Rect.X + slot.Rect.Width - newW;
-            else if (slot.Direction.EndsWith("Right")) finalX = slot.Rect.X;
-            else if (slot.Direction.EndsWith("Top")) finalY = slot.Rect.Y + slot.Rect.Height - newH;
-            else if (slot.Direction.EndsWith("Bottom")) finalY = slot.Rect.Y;
+            if (slot.Direction == EdgeDirection.Left) finalX = slot.Rect.X + slot.Rect.Width - newW;
+            else if (slot.Direction == EdgeDirection.Right) finalX = slot.Rect.X;
+            else if (slot.Direction == EdgeDirection.Top) finalY = slot.Rect.Y + slot.Rect.Height - newH;
+            else if (slot.Direction == EdgeDirection.Bottom) finalY = slot.Rect.Y;
 
             return new Rect(finalX, finalY, newW, newH);
         }
@@ -1111,10 +1030,10 @@ namespace SharpKVM
                         layout.AnchorScreenID = slot.ParentID;
                         layout.AnchorEdge = slot.Direction switch
                         {
-                            "Left" => EdgeDirection.Right,
-                            "Right" => EdgeDirection.Left,
-                            "Top" => EdgeDirection.Bottom,
-                            "Bottom" => EdgeDirection.Top,
+                            EdgeDirection.Left => EdgeDirection.Right,
+                            EdgeDirection.Right => EdgeDirection.Left,
+                            EdgeDirection.Top => EdgeDirection.Bottom,
+                            EdgeDirection.Bottom => EdgeDirection.Top,
                             _ => EdgeDirection.None
                         };
                     }
@@ -1126,10 +1045,7 @@ namespace SharpKVM
             DrawVisualLayout();
         }
 
-        private double GetDistanceToRect(Point pt, Rect rect) {
-            double dx = Math.Max(rect.Left - pt.X, Math.Max(0, pt.X - rect.Right)), dy = Math.Max(rect.Top - pt.Y, Math.Max(0, pt.Y - rect.Bottom));
-            return Math.Sqrt(dx * dx + dy * dy);
-        }
+        private static double GetDistanceToRect(Point pt, Rect rect) => LayoutGeometry.GetDistanceToRect(pt, rect);
 
         private void AddClientToDock(ClientHandler client) {
             double ratio = (double)client.Width / client.Height;
@@ -1225,7 +1141,7 @@ namespace SharpKVM
                 if(isDragging) {
                     isDragging = false; e.Pointer.Capture(null);
                     Point boxCenter = new Point(Canvas.GetLeft(box) + box.Width/2, Canvas.GetTop(box) + box.Height/2);
-                    var bestMatch = _snapSlots.Select(slot => new { Slot = slot, Dist = GetDistanceToRect(boxCenter, slot.Rect) }).Where(x => x.Dist < 100).OrderBy(x => x.Dist).FirstOrDefault();
+                    var bestMatch = _snapSlots.Select(slot => new { Slot = slot, Dist = GetDistanceToRect(boxCenter, slot.Rect) }).Where(x => x.Dist < SNAP_DISTANCE_THRESHOLD).OrderBy(x => x.Dist).FirstOrDefault();
                     if(_layoutMode == LayoutMode.Snap && bestMatch != null) {
                         var slot = bestMatch.Slot;
                         var snappedRect = GetSnapRect(slot, ratio);
@@ -1247,10 +1163,10 @@ namespace SharpKVM
                             AnchorScreenID = slot.ParentID,
                             AnchorEdge = slot.Direction switch
                             {
-                                "Left" => EdgeDirection.Right,
-                                "Right" => EdgeDirection.Left,
-                                "Top" => EdgeDirection.Bottom,
-                                "Bottom" => EdgeDirection.Top,
+                                EdgeDirection.Left => EdgeDirection.Right,
+                                EdgeDirection.Right => EdgeDirection.Left,
+                                EdgeDirection.Top => EdgeDirection.Bottom,
+                                EdgeDirection.Bottom => EdgeDirection.Top,
                                 _ => EdgeDirection.None
                             }
                         };
@@ -1331,14 +1247,14 @@ namespace SharpKVM
         }
 
         private void CreateExtensionSlots(string currentSlotID, Rect clientRect) {
-            string incomingDir = "";
-            if (currentSlotID.EndsWith("_Left")) incomingDir = "Right";
-            else if (currentSlotID.EndsWith("_Right")) incomingDir = "Left";
-            else if (currentSlotID.EndsWith("_Top")) incomingDir = "Bottom";
-            else if (currentSlotID.EndsWith("_Bottom")) incomingDir = "Top";
-            double thickness = 20;
+            EdgeDirection incomingDir = EdgeDirection.None;
+            if (currentSlotID.EndsWith("_Left")) incomingDir = EdgeDirection.Right;
+            else if (currentSlotID.EndsWith("_Right")) incomingDir = EdgeDirection.Left;
+            else if (currentSlotID.EndsWith("_Top")) incomingDir = EdgeDirection.Bottom;
+            else if (currentSlotID.EndsWith("_Bottom")) incomingDir = EdgeDirection.Top;
+            double thickness = SNAP_SLOT_THICKNESS;
 
-            void AddSlot(string suffix, Rect r, string dir) {
+            void AddSlot(string suffix, Rect r, EdgeDirection dir) {
                 var id = currentSlotID + suffix;
                 if(!_snapSlots.Any(s=>s.ID == id)) {
                     _snapSlots.Add(new SnapSlot(id, r, currentSlotID, dir));
@@ -1346,21 +1262,24 @@ namespace SharpKVM
                         Width = r.Width, Height = r.Height,
                         BorderBrush = Brushes.LightGray, BorderThickness = new Thickness(1),
                         Background = new SolidColorBrush(Colors.LightGray, 0.3),
-                        IsHitTestVisible = false 
+                        IsHitTestVisible = false
                     };
                     Canvas.SetLeft(visualSlot, r.X); Canvas.SetTop(visualSlot, r.Y);
                     _pnlStage.Children.Add(visualSlot);
                 }
             }
 
-            if (incomingDir != "Left") AddSlot("_Left", new Rect(clientRect.X - thickness, clientRect.Y, thickness, clientRect.Height), "Left");
-            if (incomingDir != "Right") AddSlot("_Right", new Rect(clientRect.Right, clientRect.Y, thickness, clientRect.Height), "Right");
-            if (incomingDir != "Top") AddSlot("_Top", new Rect(clientRect.X, clientRect.Y - thickness, clientRect.Width, thickness), "Top");
-            if (incomingDir != "Bottom") AddSlot("_Bottom", new Rect(clientRect.X, clientRect.Bottom, clientRect.Width, thickness), "Bottom");
+            if (incomingDir != EdgeDirection.Left) AddSlot("_Left", new Rect(clientRect.X - thickness, clientRect.Y, thickness, clientRect.Height), EdgeDirection.Left);
+            if (incomingDir != EdgeDirection.Right) AddSlot("_Right", new Rect(clientRect.Right, clientRect.Y, thickness, clientRect.Height), EdgeDirection.Right);
+            if (incomingDir != EdgeDirection.Top) AddSlot("_Top", new Rect(clientRect.X, clientRect.Y - thickness, clientRect.Width, thickness), EdgeDirection.Top);
+            if (incomingDir != EdgeDirection.Bottom) AddSlot("_Bottom", new Rect(clientRect.X, clientRect.Bottom, clientRect.Width, thickness), EdgeDirection.Bottom);
         }
 
         private void ToggleServerState(object? s, RoutedEventArgs e) { if(_isServerRunning) StopServer(); else StartServer(); }
         
+        // SECURITY NOTE: The server binds on all interfaces without authentication or encryption.
+        // All traffic (input events, clipboard data, files) is sent in plaintext over TCP.
+        // Consider adding TLS and a shared-secret handshake for use on untrusted networks.
         private void StartServer() {
             try {
                 _serverListener = new TcpListener(IPAddress.Any, DEFAULT_PORT);
@@ -1388,7 +1307,7 @@ namespace SharpKVM
                         }
                     }
                 }
-                catch {}
+                catch (Exception ex) { Debug.WriteLine($"[SharpKVM] IP detection failed: {ex.Message}"); }
 
                 if (myIP == "Unknown") 
                     myIP = Dns.GetHostEntry(Dns.GetHostName()).AddressList.FirstOrDefault(ip => ip.AddressFamily == AddressFamily.InterNetwork)?.ToString() ?? "127.0.0.1";
@@ -1404,11 +1323,13 @@ namespace SharpKVM
                 
                 // [??ル맪?? ???壤??熬곣뫖苑???戮곗굚
                 _mouseSenderCts = new CancellationTokenSource();
-                Task.Run(() => StartMouseSenderLoop(_mouseSenderCts.Token));
+                Task.Run(() => StartMouseSenderLoop(_mouseSenderCts.Token))
+                    .ContinueWith(t => Dispatcher.UIThread.Post(() => Log($"MouseSenderLoop failed: {t.Exception?.GetBaseException().Message}")), TaskContinuationOptions.OnlyOnFaulted);
 
                 // [??瑜곸젧] ??????怨룹꽘???곌랜?????蹂ㅽ깴???筌뤿굝????㉱??Task ??蹂ㅽ깴??
 
-                Task.Run(() => _hook.Run());
+                Task.Run(() => _hook.Run())
+                    .ContinueWith(t => Dispatcher.UIThread.Post(() => Log($"InputHook failed: {t.Exception?.GetBaseException().Message}")), TaskContinuationOptions.OnlyOnFaulted);
                 AcceptClients();
             } catch(Exception ex) { Log("Start Error: " + ex.Message); }
         }
@@ -1440,7 +1361,8 @@ namespace SharpKVM
             {
                 while (!token.IsCancellationRequested)
                 {
-                    if (_isRemoteActive && _activeRemoteClient != null && _hasPendingMouse)
+                    var remote = _activeRemoteClient;
+                    if (_isRemoteActive && remote != null && _hasPendingMouse)
                     {
                         // ????怨몃턄 ??????⑤챷紐드슖???袁ⓥ뵛 ??類ｌ┣ (int??atomic)
                         int x = _pendingMouseX;
@@ -1455,14 +1377,16 @@ namespace SharpKVM
                         // ??類ㅼ굥????戮곗굚/??リ턁筌???戮곗젍????類ｋ럠????レ뒭筌뤿떣泥? ???덈펲嶺??誘る닔? ?곌랜?亦???β돦裕뉐퐲???熬곣뫗????????깅쾳.
                         
                         // ???깆젷 ?熬곣뫖苑?
-                        _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = x, Y = y });
+                        remote.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = x, Y = y });
                     }
-                    await Task.Delay(5, token); // ??200Hz
+                    await Task.Delay(MOUSE_SENDER_INTERVAL_MS, token);
                 }
             }
             catch (TaskCanceledException) { }
         }
 
+        // SECURITY NOTE: Any TCP client that sends a valid Hello packet is accepted.
+        // There is no authentication, IP allowlisting, or rate limiting.
         private async void AcceptClients() {
             while(_isServerRunning) {
                 try {
@@ -1492,18 +1416,19 @@ namespace SharpKVM
                     if (await handler.HandshakeAsync()) {
                         AddConnectedClient(handler); handler.StartReading(); 
                         Dispatcher.UIThread.Post(() => { AddClientToDock(handler); Log($"Client Connected: {handler.Width}x{handler.Height}"); });
-                    } else { handler.Close(); }
-                } catch {}
+                    } else { handler.Dispose(); }
+                } catch (Exception ex) { if (_isServerRunning) Dispatcher.UIThread.Post(() => Log($"AcceptClients error: {ex.Message}")); }
             }
         }
 
         // [?곌랜踰?? 嶺뚮∥?꾥땻???怨뺣뼺?
         private void OnHookMousePressed(object? sender, MouseHookEventArgs e) { 
             if (e.Data.Button == SharpHook.Native.MouseButton.Button1) _isLeftDragging = true; 
-            if (_isRemoteActive && _activeRemoteClient != null) { 
+            var remote = _activeRemoteClient;
+            if (_isRemoteActive && remote != null) {
                 // [v6.5] ??븐뼦???????β돦裕뉐퐲??怨뺣뼺?
                 var now = DateTime.Now;
-                if (_lastClickButton == (int)e.Data.Button && (now - _lastClickTime).TotalMilliseconds < 500) {
+                if (_lastClickButton == (int)e.Data.Button && (now - _lastClickTime).TotalMilliseconds < DOUBLE_CLICK_THRESHOLD_MS) {
                     _clickCount++;
                 } else {
                     _clickCount = 1;
@@ -1514,11 +1439,11 @@ namespace SharpKVM
                 // [v6.4] ?????????類ｋ럠?????????レ뒭筌뤿떣泥? ???덈펲嶺?嶺뚯빖留???熬곣뫖苑??琉우뿰 ??戮?맋 ?곌랜???
                 if (_hasPendingMouse) {
                     _hasPendingMouse = false;
-                    _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = _pendingMouseX, Y = _pendingMouseY });
+                    remote.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = _pendingMouseX, Y = _pendingMouseY });
                 }
 
-                _activeRemoteClient.SendPacketAsync(new InputPacket { 
-                    Type = PacketType.MouseDown, 
+                remote.SendPacketAsync(new InputPacket {
+                    Type = PacketType.MouseDown,
                     KeyCode = (int)e.Data.Button,
                     X = (int)_virtualX, // [??ル맪?? ???????戮곗젍 ??レ뒭筌????욋뵛??
                     Y = (int)_virtualY,
@@ -1530,16 +1455,17 @@ namespace SharpKVM
 
         // [?곌랜踰?? 嶺뚮∥?꾥땻???怨뺣뼺?
         private void OnHookMouseReleased(object? sender, MouseHookEventArgs e) { 
-            if (e.Data.Button == SharpHook.Native.MouseButton.Button1) _isLeftDragging = false; 
-            if (_isRemoteActive && _activeRemoteClient != null) { 
+            if (e.Data.Button == SharpHook.Native.MouseButton.Button1) _isLeftDragging = false;
+            var remote = _activeRemoteClient;
+            if (_isRemoteActive && remote != null) {
                 // [v6.4] ???????怨몄젷 ????類ｋ럠?????????レ뒭筌뤿떣泥? ???덈펲嶺?嶺뚯빖留???熬곣뫖苑?
                 if (_hasPendingMouse) {
                     _hasPendingMouse = false;
-                    _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = _pendingMouseX, Y = _pendingMouseY });
+                    remote.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = _pendingMouseX, Y = _pendingMouseY });
                 }
 
-                _activeRemoteClient.SendPacketAsync(new InputPacket { 
-                    Type = PacketType.MouseUp, 
+                remote.SendPacketAsync(new InputPacket {
+                    Type = PacketType.MouseUp,
                     KeyCode = (int)e.Data.Button,
                     X = (int)_virtualX, // [??ル맪?? ???????戮곗젍 ??レ뒭筌????욋뵛??
                     Y = (int)_virtualY,
@@ -1549,54 +1475,26 @@ namespace SharpKVM
             } 
         }
 
-        private void OnHookMouseWheel(object? sender, MouseWheelHookEventArgs e) { 
-            if (_isRemoteActive && _activeRemoteClient != null) { 
-                double sensitivity = _activeRemoteClient.WheelSensitivity;
+        private void OnHookMouseWheel(object? sender, MouseWheelHookEventArgs e) {
+            var remote = _activeRemoteClient;
+            if (_isRemoteActive && remote != null) {
+                double sensitivity = remote.WheelSensitivity;
                 _wheelAccumulator += e.Data.Rotation * sensitivity;
 
                 int delta = (int)_wheelAccumulator;
                 if (delta != 0) {
                     _wheelAccumulator -= delta;
-                    _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseWheel, KeyCode = delta }); 
+                    remote.SendPacketAsync(new InputPacket { Type = PacketType.MouseWheel, KeyCode = delta });
                 }
-                e.SuppressEvent = true; 
-            } 
+                e.SuppressEvent = true;
+            }
         }
 
-        private bool IsCandidateOnSide(Rect rootBounds, Rect candidate, EdgeDirection edge)
-        {
-            if (edge == EdgeDirection.Left) return candidate.Center.X <= rootBounds.Center.X;
-            if (edge == EdgeDirection.Right) return candidate.Center.X >= rootBounds.Center.X;
-            if (edge == EdgeDirection.Top) return candidate.Center.Y <= rootBounds.Center.Y;
-            if (edge == EdgeDirection.Bottom) return candidate.Center.Y >= rootBounds.Center.Y;
-            return false;
-        }
+        private static bool IsCandidateOnSide(Rect rootBounds, Rect candidate, EdgeDirection edge) => LayoutGeometry.IsCandidateOnSide(rootBounds, candidate, edge);
 
-        private Point GetNearestPointOnEdge(Point source, Rect rect, EdgeDirection edge)
-        {
-            if (edge == EdgeDirection.Left) return new Point(rect.Left, Math.Clamp(source.Y, rect.Top, rect.Bottom));
-            if (edge == EdgeDirection.Right) return new Point(rect.Right, Math.Clamp(source.Y, rect.Top, rect.Bottom));
-            if (edge == EdgeDirection.Top) return new Point(Math.Clamp(source.X, rect.Left, rect.Right), rect.Top);
-            if (edge == EdgeDirection.Bottom) return new Point(Math.Clamp(source.X, rect.Left, rect.Right), rect.Bottom);
-            return source;
-        }
+        private static Point GetNearestPointOnEdge(Point source, Rect rect, EdgeDirection edge) => LayoutGeometry.GetNearestPointOnEdge(source, rect, edge);
 
-        private bool TryGetEdgeAtLocalScreen(ScreenInfo screen, int x, int y, out EdgeDirection edge)
-        {
-            edge = EdgeDirection.None;
-            int buffer = (int)(Math.Min(screen.Bounds.Width, screen.Bounds.Height) * 0.01);
-            buffer = Math.Clamp(buffer, 5, 30);
-
-            bool inY = y >= screen.Bounds.Top - buffer && y <= screen.Bounds.Bottom + buffer;
-            bool inX = x >= screen.Bounds.Left - buffer && x <= screen.Bounds.Right + buffer;
-
-            if (inY && x <= screen.Bounds.Left + buffer) edge = EdgeDirection.Left;
-            else if (inY && x >= screen.Bounds.Right - 1 - buffer) edge = EdgeDirection.Right;
-            else if (inX && y <= screen.Bounds.Top + buffer) edge = EdgeDirection.Top;
-            else if (inX && y >= screen.Bounds.Bottom - 1 - buffer) edge = EdgeDirection.Bottom;
-
-            return edge != EdgeDirection.None;
-        }
+        private static bool TryGetEdgeAtLocalScreen(ScreenInfo screen, int x, int y, out EdgeDirection edge) => LayoutGeometry.TryGetEdgeAtLocalScreen(screen.Bounds, x, y, out edge);
 
         private bool TryFindAttachTarget(ScreenInfo rootScreen, EdgeDirection localExitEdge, Point cursorPoint, out ClientHandler targetClient, out Rect targetDesktopRect, out Point targetEdgePoint, out EdgeDirection targetEntryEdge)
         {
@@ -1608,8 +1506,9 @@ namespace SharpKVM
             Rect sourceRect = rootScreen.Bounds;
             double bestDist = double.MaxValue;
 
-            foreach (var layout in _clientLayouts.Values.Where(l => l.IsPlaced))
+            foreach (var layout in _clientLayouts.Values)
             {
+                if (!layout.IsPlaced) continue;
                 var candidate = GetClientByKey(layout.ClientKey);
                 if (candidate == null) continue;
                 var expectedEntryEdge = layout.AnchorEdge != EdgeDirection.None ? layout.AnchorEdge : OppositeEdge(localExitEdge);
@@ -1637,7 +1536,7 @@ namespace SharpKVM
                 }
             }
 
-            return bestDist < 1200;
+            return bestDist < ATTACH_TARGET_MAX_DISTANCE;
         }
 
         private bool TryFindNeighborFromRemote(EdgeDirection exitEdge, out ClientHandler targetClient, out Rect targetDesktopRect, out Point targetEdgePoint, out EdgeDirection targetEntryEdge)
@@ -1646,9 +1545,10 @@ namespace SharpKVM
             targetDesktopRect = new Rect();
             targetEdgePoint = default;
             targetEntryEdge = EdgeDirection.None;
-            if (_activeRemoteClient == null) return false;
+            var remote = _activeRemoteClient;
+            if (remote == null) return false;
 
-            string activeKey = GetClientKey(_activeRemoteClient);
+            string activeKey = GetClientKey(remote);
             if (!_clientLayouts.TryGetValue(activeKey, out var activeLayout) || !activeLayout.IsPlaced) return false;
 
             Rect activeRect = activeLayout.DesktopRect.Width > 0 && activeLayout.DesktopRect.Height > 0
@@ -1656,8 +1556,8 @@ namespace SharpKVM
                 : StageToDesktop(activeLayout.StageRect);
             if (activeRect.Width <= 0 || activeRect.Height <= 0) return false;
 
-            double clientW = _activeRemoteClient.Width > 0 ? _activeRemoteClient.Width : 1920;
-            double clientH = _activeRemoteClient.Height > 0 ? _activeRemoteClient.Height : 1080;
+            double clientW = remote.Width > 0 ? remote.Width : 1920;
+            double clientH = remote.Height > 0 ? remote.Height : 1080;
             double ratioX = Math.Clamp(_virtualX / clientW, 0.0, 1.0);
             double ratioY = Math.Clamp(_virtualY / clientH, 0.0, 1.0);
 
@@ -1672,8 +1572,9 @@ namespace SharpKVM
 
             double bestDist = double.MaxValue;
 
-            foreach (var layout in _clientLayouts.Values.Where(l => l.IsPlaced && l.ClientKey != activeKey))
+            foreach (var layout in _clientLayouts.Values)
             {
+                if (!layout.IsPlaced || layout.ClientKey == activeKey) continue;
                 var candidate = GetClientByKey(layout.ClientKey);
                 if (candidate == null) continue;
                 var expectedEntryEdge = layout.AnchorEdge != EdgeDirection.None ? layout.AnchorEdge : OppositeEdge(exitEdge);
@@ -1696,7 +1597,7 @@ namespace SharpKVM
                 }
             }
 
-            return bestDist < 1400;
+            return bestDist < NEIGHBOR_MAX_DISTANCE;
         }
 
         private void SwitchToRemoteClient(ClientHandler targetClient, ScreenInfo rootScreen, EdgeDirection entryEdge, Rect targetDesktopRect, Point targetEdgePoint)
@@ -1756,15 +1657,16 @@ namespace SharpKVM
 
             double ratioX = 0.5;
             double ratioY = 0.5;
-            if (_activeRemoteClient != null && _activeRemoteClient.Width > 0 && _activeRemoteClient.Height > 0)
+            var remote = _activeRemoteClient;
+            if (remote != null && remote.Width > 0 && remote.Height > 0)
             {
-                ratioX = Math.Clamp(_virtualX / _activeRemoteClient.Width, 0.0, 1.0);
-                ratioY = Math.Clamp(_virtualY / _activeRemoteClient.Height, 0.0, 1.0);
+                ratioX = Math.Clamp(_virtualX / remote.Width, 0.0, 1.0);
+                ratioY = Math.Clamp(_virtualY / remote.Height, 0.0, 1.0);
             }
 
             double targetX = rootScreen.Bounds.X + (rootScreen.Bounds.Width * ratioX);
             double targetY = rootScreen.Bounds.Y + (rootScreen.Bounds.Height * ratioY);
-            int buffer = 10;
+            int buffer = RETURN_CURSOR_BUFFER;
 
             // Return through the boundary that is actually connected to local.
             // Using exitEdge directly can place cursor on the opposite side.
@@ -1774,9 +1676,9 @@ namespace SharpKVM
 
             // Free layout: use absolute edge mapping between remote desktop rect and local root screen,
             // so returning point aligns with the touching boundary instead of snap-like ratios.
-            if (_layoutMode == LayoutMode.Free && _activeRemoteClient != null)
+            if (_layoutMode == LayoutMode.Free && remote != null)
             {
-                string activeKey = GetClientKey(_activeRemoteClient);
+                string activeKey = GetClientKey(remote);
                 if (_clientLayouts.TryGetValue(activeKey, out var activeLayout) && activeLayout.IsPlaced)
                 {
                     Rect activeRect = activeLayout.DesktopRect.Width > 0 && activeLayout.DesktopRect.Height > 0
@@ -1863,7 +1765,15 @@ namespace SharpKVM
             {
                 ScreenInfo? currentScreen = null;
                 foreach (var screen in _cachedScreens) { if (screen.Bounds.Contains(new Point(x, y))) { currentScreen = screen; break; } }
-                if (currentScreen == null) currentScreen = _cachedScreens.OrderBy(scr => Math.Pow(x - scr.Bounds.Center.X, 2) + Math.Pow(y - scr.Bounds.Center.Y, 2)).FirstOrDefault();
+                if (currentScreen == null)
+                {
+                    double bestScreenDist = double.MaxValue;
+                    foreach (var scr in _cachedScreens)
+                    {
+                        double d = Math.Pow(x - scr.Bounds.Center.X, 2) + Math.Pow(y - scr.Bounds.Center.Y, 2);
+                        if (d < bestScreenDist) { bestScreenDist = d; currentScreen = scr; }
+                    }
+                }
                 if (currentScreen != null && TryGetEdgeAtLocalScreen(currentScreen, x, y, out var exitEdge))
                 {
                     if (!IsGlobalOuterEdgeDesktop(currentScreen, exitEdge))
@@ -1881,29 +1791,31 @@ namespace SharpKVM
                 return;
             }
 
-            if (_activeRemoteClient == null || _activeRootScreen == null) return;
+            var remote = _activeRemoteClient;
+            var rootScreen = _activeRootScreen;
+            if (remote == null || rootScreen == null) return;
 
-            double centerX = _activeRootScreen.Bounds.Center.X;
-            double centerY = _activeRootScreen.Bounds.Center.Y;
+            double centerX = rootScreen.Bounds.Center.X;
+            double centerY = rootScreen.Bounds.Center.Y;
             int dx = x - (int)centerX;
             int dy = y - (int)centerY;
             if (dx == 0 && dy == 0) return;
 
-            if (Math.Abs(dx) > 500 || Math.Abs(dy) > 500)
+            if (Math.Abs(dx) > LARGE_DELTA_THRESHOLD || Math.Abs(dy) > LARGE_DELTA_THRESHOLD)
             {
                 _ignoreNextMove = true;
                 _simulator?.SimulateMouseMovement((short)centerX, (short)centerY);
                 return;
             }
 
-            double accelX = Math.Abs(dx) > 10 ? 1.1 : 1.0;
-            double accelY = Math.Abs(dy) > 10 ? 1.1 : 1.0;
-            double currentSensitivity = dragging ? 1.0 : _activeRemoteClient.Sensitivity;
+            double accelX = Math.Abs(dx) > ACCELERATION_THRESHOLD ? ACCELERATION_FACTOR : 1.0;
+            double accelY = Math.Abs(dy) > ACCELERATION_THRESHOLD ? ACCELERATION_FACTOR : 1.0;
+            double currentSensitivity = dragging ? 1.0 : remote.Sensitivity;
             _virtualX += dx * _scaleX * _resolutionScale * currentSensitivity * (dragging ? 1.0 : accelX);
             _virtualY += dy * _scaleY * _resolutionScale * currentSensitivity * (dragging ? 1.0 : accelY);
 
-            double clientW = _activeRemoteClient.Width > 0 ? _activeRemoteClient.Width : 1920;
-            double clientH = _activeRemoteClient.Height > 0 ? _activeRemoteClient.Height : 1080;
+            double clientW = remote.Width > 0 ? remote.Width : 1920;
+            double clientH = remote.Height > 0 ? remote.Height : 1080;
             EdgeDirection exit = EdgeDirection.None;
             if (_virtualX < 0) exit = EdgeDirection.Left;
             else if (_virtualX > clientW) exit = EdgeDirection.Right;
@@ -1914,7 +1826,7 @@ namespace SharpKVM
             {
                 if (TryFindNeighborFromRemote(exit, out var nextClient, out var nextDesktopRect, out var nextEdgePoint, out var nextEntryEdge))
                 {
-                    SwitchToRemoteClient(nextClient, _activeRootScreen, nextEntryEdge, nextDesktopRect, nextEdgePoint);
+                    SwitchToRemoteClient(nextClient, rootScreen, nextEntryEdge, nextDesktopRect, nextEdgePoint);
                 }
                 else
                 {
@@ -1949,10 +1861,10 @@ namespace SharpKVM
             _pendingMouseY = (int)_virtualY;
             _hasPendingMouse = true;
 
-            if (dragging && _activeRemoteClient != null)
+            if (dragging && remote != null)
             {
                 _hasPendingMouse = false;
-                _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = _pendingMouseX, Y = _pendingMouseY });
+                remote.SendPacketAsync(new InputPacket { Type = PacketType.MouseMove, X = _pendingMouseX, Y = _pendingMouseY });
             }
 
             _ignoreNextMove = true;
@@ -1975,28 +1887,30 @@ namespace SharpKVM
 
             if (code == KeyCode.VcC && (_isLocalCtrlDown || _isLocalMetaDown))
             {
-                _ = Task.Run(async () => { await Task.Delay(100); Dispatcher.UIThread.Post(() => CheckClipboard()); });
+                _ = Task.Run(async () => { await Task.Delay(CLIPBOARD_PASTE_DELAY_MS); Dispatcher.UIThread.Post(() => CheckClipboard()); })
+                    .ContinueWith(t => Dispatcher.UIThread.Post(() => Log($"ClipboardCopy task failed: {t.Exception?.GetBaseException().Message}")), TaskContinuationOptions.OnlyOnFaulted);
             }
             if (code == KeyCode.VcV && (_isLocalCtrlDown || _isLocalMetaDown))
             {
                 if (_isRemoteActive) TrySyncClipboardToRemote();
             }
 
-            if (_isRemoteActive && _activeRemoteClient != null)
+            var remoteKey = _activeRemoteClient;
+            if (_isRemoteActive && remoteKey != null)
             {
                 var originalCode = code;
-                if (_activeRemoteClient.IsMac)
+                if (remoteKey.IsMac)
                 {
                     code = MacInputMapping.MapKeyCodeForMacRemote(code);
                     if (IsMacInputDiagnosticKey(originalCode) || IsMacInputDiagnosticKey(code))
                     {
-                        Log($"[MacInput][TX] KeyDown local={originalCode} mapped={code} remote={GetClientKey(_activeRemoteClient)}");
+                        Log($"[MacInput][TX] KeyDown local={originalCode} mapped={code} remote={GetClientKey(remoteKey)}");
                     }
                 }
 
                 if (code == KeyCode.VcInsert) code = (KeyCode)0xE052;
 
-                _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.KeyDown, KeyCode = (int)code });
+                remoteKey.SendPacketAsync(new InputPacket { Type = PacketType.KeyDown, KeyCode = (int)code });
                 e.SuppressEvent = true;
             }
         }
@@ -2006,18 +1920,19 @@ namespace SharpKVM
             var code = e.Data.KeyCode;
             if (code == KeyCode.VcLeftControl || code == KeyCode.VcRightControl) _isLocalCtrlDown = false;
             if (code == KeyCode.VcLeftMeta || code == KeyCode.VcRightMeta) _isLocalMetaDown = false;
-            if (_isRemoteActive && _activeRemoteClient != null)
+            var remoteKey = _activeRemoteClient;
+            if (_isRemoteActive && remoteKey != null)
             {
                 var originalCode = code;
-                if (_activeRemoteClient.IsMac)
+                if (remoteKey.IsMac)
                 {
                     code = MacInputMapping.MapKeyCodeForMacRemote(code);
                     if (IsMacInputDiagnosticKey(originalCode) || IsMacInputDiagnosticKey(code))
                     {
-                        Log($"[MacInput][TX] KeyUp local={originalCode} mapped={code} remote={GetClientKey(_activeRemoteClient)}");
+                        Log($"[MacInput][TX] KeyUp local={originalCode} mapped={code} remote={GetClientKey(remoteKey)}");
                     }
                 }
-                _activeRemoteClient.SendPacketAsync(new InputPacket { Type = PacketType.KeyUp, KeyCode = (int)code });
+                remoteKey.SendPacketAsync(new InputPacket { Type = PacketType.KeyUp, KeyCode = (int)code });
                 e.SuppressEvent = true;
             }
         }
@@ -2064,6 +1979,8 @@ namespace SharpKVM
             Log("Client Stopped.");
         }
         
+        // SECURITY NOTE: The client connects over unencrypted TCP with no server identity verification.
+        // A MITM attacker could intercept keystrokes and clipboard content.
         private async Task StartClientLoop() {
             _isClientRunning = true; _btnConnect.Content = "Disconnect"; SaveConfig();
             string ip = _txtServerIP.Text ?? DEFAULT_IP;
@@ -2155,7 +2072,7 @@ namespace SharpKVM
                                 }
                             }
                         }
-                    } catch (Exception ex) { if (!_isClientRunning) break; Dispatcher.UIThread.Post(() => Log($"Disconnected. Retry 3s.. ({ex.Message})")); await Task.Delay(3000); }
+                    } catch (Exception ex) { if (!_isClientRunning) break; Dispatcher.UIThread.Post(() => Log($"Disconnected. Retry 3s.. ({ex.Message})")); await Task.Delay(CLIENT_RECONNECT_DELAY_MS); }
                 }
             });
         }
@@ -2169,7 +2086,7 @@ namespace SharpKVM
             else if (code == KeyCode.VcDown) macCode = 125; 
 
             if (macCode > 0) {
-                if ((DateTime.Now - _lastMacShortcutTime).TotalMilliseconds < 200) return;
+                if ((DateTime.Now - _lastMacShortcutTime).TotalMilliseconds < MAC_SHORTCUT_COOLDOWN_MS) return;
                 _lastMacShortcutTime = DateTime.Now;
 
                 _ = Task.Run(() => {
@@ -2189,7 +2106,7 @@ namespace SharpKVM
         private void RefreshMacInputSourceHotkeysIfNeeded()
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
-            if ((DateTime.UtcNow - _lastMacInputSourceHotkeyRefresh).TotalSeconds < 10) return;
+            if ((DateTime.UtcNow - _lastMacInputSourceHotkeyRefresh).TotalSeconds < MAC_HOTKEY_REFRESH_INTERVAL_SEC) return;
             _lastMacInputSourceHotkeyRefresh = DateTime.UtcNow;
 
             if (!MacInputSourceHotkeyProvider.TryLoad(out var hotkeys))
@@ -2315,7 +2232,7 @@ namespace SharpKVM
         private void LogMacAccessibilityStatusIfNeeded(bool force = false)
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
-            if (!force && (DateTime.UtcNow - _lastMacAccessibilityStatusLogTime).TotalSeconds < 10) return;
+            if (!force && (DateTime.UtcNow - _lastMacAccessibilityStatusLogTime).TotalSeconds < MAC_ACCESSIBILITY_LOG_INTERVAL_SEC) return;
             _lastMacAccessibilityStatusLogTime = DateTime.UtcNow;
 
             bool trusted = MacAccessibilityDiagnostics.IsAccessibilityTrusted();

@@ -19,7 +19,7 @@ namespace SharpKVM
                     File.Delete(tempFile);
                     return data;
                 }
-            } catch {}
+            } catch (Exception ex) { Debug.WriteLine($"[SharpKVM] GetWindowsClipboardImage failed: {ex.Message}"); }
             return null;
         }
 
@@ -29,16 +29,16 @@ namespace SharpKVM
                 var script = "set the clipboard to (read (POSIX file \"" + imagePath + "\") as {class PNGf})";
                 var info = new ProcessStartInfo("osascript", $"-e '{script}'") { CreateNoWindow = true, UseShellExecute = false };
                 Process.Start(info)?.WaitForExit();
-            } catch {}
+            } catch (Exception ex) { Debug.WriteLine($"[SharpKVM] SetMacClipboardImage failed: {ex.Message}"); }
         }
-        
+
         public static void SetWindowsClipboardImage(string imagePath)
         {
             try {
                 var psCommand = $"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('{imagePath}'))";
                 var info = new ProcessStartInfo("powershell", $"-Sta -Command \"{psCommand}\"") { CreateNoWindow = true, UseShellExecute = false };
                 Process.Start(info)?.WaitForExit();
-            } catch {}
+            } catch (Exception ex) { Debug.WriteLine($"[SharpKVM] SetWindowsClipboardImage failed: {ex.Message}"); }
         }
     }
 

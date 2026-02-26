@@ -16,12 +16,12 @@ namespace SharpKVM
         [DllImport("user32.dll")] private static extern bool SetSystemCursor(IntPtr hcur, uint id);
         [DllImport("user32.dll")] private static extern IntPtr CreateCursor(IntPtr hInst, int xHotSpot, int yHotSpot, int nWidth, int nHeight, byte[] pvANDPlane, byte[] pvXORPlane);
         [DllImport("user32.dll")] private static extern bool SystemParametersInfo(uint uiAction, uint uiParam, IntPtr pvParam, uint fWinIni);
-        
+
         [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
         private static extern int CGDisplayHideCursor(uint display);
         [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
         private static extern int CGDisplayShowCursor(uint display);
-        
+
         [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
         private static extern void CGWarpMouseCursorPosition(CGPoint newCursorPosition);
 
@@ -70,19 +70,16 @@ namespace SharpKVM
                 if (!MacInputMapping.TryMapRawMouseClickType(button, isDown, out uint type)) return;
 
                 CGPoint pos = new CGPoint { x = x, y = y };
-                // [v7.1] kCGEventSourceStateCombinedSessionState(0) ????IntPtr.Zero ????
-                // Zoom ?怨밴묶?癒?퐣 ?ル슦紐닷첎? ?????袁⑷맒??獄쎻뫗???띾┛ ?袁る맙
                 IntPtr mouseEvent = CGEventCreateMouseEvent(IntPtr.Zero, type, pos, button);
                 if (mouseEvent != IntPtr.Zero) {
                     CGEventSetIntegerValueField(mouseEvent, 1, clickCount);
 
-                    CGEventPost(0, mouseEvent); 
+                    CGEventPost(0, mouseEvent);
                     CFRelease(mouseEvent);
                 }
-            } catch {}
+            } catch (Exception ex) { Debug.WriteLine($"[SharpKVM] SendMacRawClick failed: {ex.Message}"); }
         }
 
-        // [v6.7] 筌???猷?筌왖?癒?뱽 ?袁る립 ??쇱뵠?怨뺥닏 筌롫뗄苑???곕떽? (Zoom ?癒곕늄 ?袁⑷맒 ??욧퍙)
         public static void SendMacRawMove(double x, double y)
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
@@ -93,10 +90,9 @@ namespace SharpKVM
                     CGEventPost(0, mouseEvent);
                     CFRelease(mouseEvent);
                 }
-            } catch {}
+            } catch (Exception ex) { Debug.WriteLine($"[SharpKVM] SendMacRawMove failed: {ex.Message}"); }
         }
 
-        // [v6.4] 筌???뺤삋域?筌왖?癒?뱽 ?袁る립 ??쇱뵠?怨뺥닏 筌롫뗄苑???곕떽?
         public static void SendMacRawDrag(double x, double y, int button)
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
@@ -109,7 +105,7 @@ namespace SharpKVM
                     CGEventPost(0, mouseEvent);
                     CFRelease(mouseEvent);
                 }
-            } catch {}
+            } catch (Exception ex) { Debug.WriteLine($"[SharpKVM] SendMacRawDrag failed: {ex.Message}"); }
         }
 
         public static void Unlock()
@@ -126,14 +122,14 @@ namespace SharpKVM
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                     if (_isHidden) return;
                     byte[] andPlane = new byte[128]; byte[] xorPlane = new byte[128];
-                    for(int i=0; i<128; i++) andPlane[i] = 0xFF; 
+                    for(int i=0; i<128; i++) andPlane[i] = 0xFF;
                     IntPtr transparentCursor = CreateCursor(IntPtr.Zero, 0, 0, 32, 32, andPlane, xorPlane);
                     SetSystemCursor(transparentCursor, OCR_NORMAL);
                 }
                 else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
                     CGDisplayHideCursor(0);
                 }
-            } catch {}
+            } catch (Exception ex) { Debug.WriteLine($"[SharpKVM] Hide cursor failed: {ex.Message}"); }
             _isHidden = true;
         }
 
@@ -147,7 +143,7 @@ namespace SharpKVM
                     CGAssociateMouseAndMouseCursorPosition(true);
                     for(int i=0; i<5; i++) CGDisplayShowCursor(0);
                 }
-            } catch {}
+            } catch (Exception ex) { Debug.WriteLine($"[SharpKVM] Show cursor failed: {ex.Message}"); }
             _isHidden = false;
         }
     }

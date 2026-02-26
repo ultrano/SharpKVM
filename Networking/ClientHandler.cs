@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -8,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace SharpKVM
 {
-    public class ClientHandler
+    public class ClientHandler : IDisposable
     {
         public TcpClient Socket;
         public string Name;
@@ -25,13 +26,16 @@ namespace SharpKVM
         private readonly MainWindow _ownerWindow;
         private int _isClosed;
 
+        // SECURITY NOTE: Network stream is used without TLS. All packets (keystrokes, mouse,
+        // clipboard text/files/images) are transmitted in plaintext. Wrap with SslStream for encryption.
         public ClientHandler(TcpClient s, MainWindow parent)
         {
             Socket = s;
             _stream = s.GetStream();
             _ownerWindow = parent;
             Name = "Client-" + ((IPEndPoint)s.Client.RemoteEndPoint!).Address;
-            Task.Run(SendingLoop);
+            Task.Run(SendingLoop)
+                .ContinueWith(t => Debug.WriteLine($"[SharpKVM] SendingLoop task failed for {Name}: {t.Exception?.GetBaseException().Message}"), TaskContinuationOptions.OnlyOnFaulted);
         }
 
         private void SendingLoop()
@@ -45,8 +49,9 @@ namespace SharpKVM
                     _stream.Write(data, 0, data.Length);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Debug.WriteLine($"[SharpKVM] SendingLoop error for {Name}: {ex.Message}");
                 Disconnected?.Invoke(this);
             }
         }
@@ -98,7 +103,7 @@ namespace SharpKVM
                     return true;
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine($"[SharpKVM] Handshake failed for {Name}: {ex.Message}"); }
 
             return false;
         }
@@ -146,10 +151,10 @@ namespace SharpKVM
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine($"[SharpKVM] ReadLoop error for {Name}: {ex.Message}"); }
 
                 Disconnected?.Invoke(this);
-            });
+            }).ContinueWith(t => Debug.WriteLine($"[SharpKVM] ReadLoop task failed for {Name}: {t.Exception?.GetBaseException().Message}"), TaskContinuationOptions.OnlyOnFaulted);
         }
 
         public void SendClipboardPacket(string text)
@@ -202,8 +207,14 @@ namespace SharpKVM
         {
             if (Interlocked.Exchange(ref _isClosed, 1) == 1) return;
 
-            try { _sendQueue.CompleteAdding(); } catch { }
-            try { Socket.Close(); } catch { }
+            try { _sendQueue.CompleteAdding(); } catch (ObjectDisposedException) { }
+            try { Socket.Close(); } catch (Exception ex) { Debug.WriteLine($"[SharpKVM] Close error for {Name}: {ex.Message}"); }
+        }
+
+        public void Dispose()
+        {
+            Close();
+            try { _sendQueue.Dispose(); } catch (ObjectDisposedException) { }
         }
     }
 }

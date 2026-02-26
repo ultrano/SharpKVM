@@ -18,7 +18,7 @@ namespace SharpKVM
                 }
                 else _txtServerIP.Text = DEFAULT_IP;
             }
-            catch { _txtServerIP.Text = DEFAULT_IP; }
+            catch (Exception ex) { Log($"LoadConfig failed: {ex.Message}"); _txtServerIP.Text = DEFAULT_IP; }
         }
 
         private void SaveConfig()
@@ -28,7 +28,7 @@ namespace SharpKVM
                 string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CONFIG_FILENAME);
                 File.WriteAllText(path, _txtServerIP.Text);
             }
-            catch { }
+            catch (Exception ex) { Log($"SaveConfig failed: {ex.Message}"); }
         }
 
         private void LoadClientConfigs()
@@ -77,7 +77,7 @@ namespace SharpKVM
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Log($"LoadClientConfigs failed: {ex.Message}"); }
         }
 
         private void SaveClientConfigs()
@@ -132,7 +132,7 @@ namespace SharpKVM
                 }
                 File.WriteAllLines(path, lines);
             }
-            catch { }
+            catch (Exception ex) { Log($"SaveClientConfigs failed: {ex.Message}"); }
         }
     }
 }

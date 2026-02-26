@@ -17,5 +17,13 @@ namespace SharpKVM
         public LayoutMode LayoutMode { get; set; } = LayoutMode.Snap;
         public double Sensitivity { get; set; } = 3.0;
         public double WheelSensitivity { get; set; } = 1.0;
+
+        public bool IsValid()
+        {
+            if (string.IsNullOrWhiteSpace(IP)) return false;
+            if (Sensitivity < 0.1 || Sensitivity > 10.0) return false;
+            if (WheelSensitivity < 0.1 || WheelSensitivity > 10.0) return false;
+            return true;
+        }
     }
 }

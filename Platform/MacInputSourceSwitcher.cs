@@ -1,12 +1,18 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace SharpKVM;
 
 public static class MacInputSourceSwitcher
 {
     private const ushort CapsLockVirtualKeyCode = 57;
-    public static string LastError { get; private set; } = "none";
+    private static string _lastError = "none";
+    public static string LastError
+    {
+        get => Volatile.Read(ref _lastError);
+        private set => Volatile.Write(ref _lastError, value);
+    }
 
     [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
     private static extern IntPtr CGEventCreateKeyboardEvent(IntPtr source, ushort virtualKey, bool keyDown);
