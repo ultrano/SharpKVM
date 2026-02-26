@@ -63,4 +63,18 @@ public static class MacInputMapping
         type = 0;
         return false;
     }
+
+    public static bool TryMapMissionControlArrowKeyCode(KeyCode code, out int macVirtualKeyCode)
+    {
+        macVirtualKeyCode = code switch
+        {
+            KeyCode.VcLeft => 123,
+            KeyCode.VcRight => 124,
+            KeyCode.VcDown => 125,
+            KeyCode.VcUp => 126,
+            _ => 0
+        };
+
+        return macVirtualKeyCode != 0;
+    }
 }

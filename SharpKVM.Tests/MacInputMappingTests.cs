@@ -72,4 +72,26 @@ public class MacInputMappingTests
         Assert.True(ok);
         Assert.Equal(expectedType, type);
     }
+
+    [Theory]
+    [InlineData(KeyCode.VcLeft, 123)]
+    [InlineData(KeyCode.VcRight, 124)]
+    [InlineData(KeyCode.VcDown, 125)]
+    [InlineData(KeyCode.VcUp, 126)]
+    public void TryMapMissionControlArrowKeyCode_MapsArrows(KeyCode key, int expected)
+    {
+        var ok = MacInputMapping.TryMapMissionControlArrowKeyCode(key, out var actual);
+
+        Assert.True(ok);
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void TryMapMissionControlArrowKeyCode_NonArrow_ReturnsFalse()
+    {
+        var ok = MacInputMapping.TryMapMissionControlArrowKeyCode(KeyCode.VcA, out var actual);
+
+        Assert.False(ok);
+        Assert.Equal(0, actual);
+    }
 }
