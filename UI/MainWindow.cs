@@ -27,7 +27,7 @@ using System.Threading.Tasks;
 
 namespace SharpKVM
 {
-    public partial class MainWindow : Window
+    public partial class MainWindow : Window, IClientHandlerMessageSink
     {
         private const int DEFAULT_PORT = 11000;
         private const string DEFAULT_IP = "127.0.0.1";
@@ -1937,35 +1937,6 @@ namespace SharpKVM
             }
         }
 
-        private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, int size)
-        {
-            int totalRead = 0;
-            while (totalRead < size)
-            {
-                int read = await stream.ReadAsync(buffer, totalRead, size - totalRead);
-                if (read == 0) return false;
-                totalRead += read;
-            }
-
-            return true;
-        }
-
-        private static async Task<byte[]?> ReadPayloadAsync(NetworkStream stream, PacketType type, int length)
-        {
-            if (!ProtocolPayloadLimits.IsValidPayloadLength(type, length))
-            {
-                return null;
-            }
-
-            byte[] payload = new byte[length];
-            if (!await ReadExactAsync(stream, payload, length))
-            {
-                return null;
-            }
-
-            return payload;
-        }
-
         private async void ToggleClientConnection(object? s, RoutedEventArgs e) { if (_isClientRunning) StopClient(); else await StartClientLoop(); }
         private void StopClient() {
             _isClientRunning = false;
@@ -2046,24 +2017,24 @@ namespace SharpKVM
                                 byte[] pRaw = InputPacketSerializer.Serialize(platformPacket);
                                 await stream.WriteAsync(pRaw, 0, pRaw.Length);
                             }
-                            int packetSize = Marshal.SizeOf<InputPacket>();
-                            var buffer = new byte[packetSize];
+                            var headerBuffer = ProtocolStreamReader.CreateInputPacketHeaderBuffer();
                             while (_isClientRunning) {
-                                if (!await ReadExactAsync(stream, buffer, buffer.Length)) throw new Exception("Disconnected");
-                                if (!InputPacketSerializer.TryDeserialize(buffer, out InputPacket p)) continue;
+                                var (status, p) = await ProtocolStreamReader.ReadInputPacketHeaderAsync(stream, headerBuffer);
+                                if (status == InputPacketHeaderReadStatus.EndOfStream) throw new Exception("Disconnected");
+                                if (status == InputPacketHeaderReadStatus.InvalidHeader) continue;
                                 if (p.Type == PacketType.Clipboard) {
-                                    var textBytes = await ReadPayloadAsync(stream, PacketType.Clipboard, p.X);
+                                    var textBytes = await ProtocolStreamReader.ReadPayloadAsync(stream, PacketType.Clipboard, p.X);
                                     if (textBytes == null) throw new Exception("Invalid clipboard payload.");
                                     string text = Encoding.UTF8.GetString(textBytes);
                                     SetRemoteClipboard(text);
                                 } 
                                 else if (p.Type == PacketType.ClipboardFile) {
-                                    var fileBytes = await ReadPayloadAsync(stream, PacketType.ClipboardFile, p.X);
+                                    var fileBytes = await ProtocolStreamReader.ReadPayloadAsync(stream, PacketType.ClipboardFile, p.X);
                                     if (fileBytes == null) throw new Exception("Invalid file payload.");
                                     ProcessReceivedFiles(fileBytes);
                                 }
                                 else if (p.Type == PacketType.ClipboardImage) {
-                                    var imgBytes = await ReadPayloadAsync(stream, PacketType.ClipboardImage, p.X);
+                                    var imgBytes = await ProtocolStreamReader.ReadPayloadAsync(stream, PacketType.ClipboardImage, p.X);
                                     if (imgBytes == null) throw new Exception("Invalid image payload.");
                                     ProcessReceivedImage(imgBytes);
                                 }
@@ -2389,5 +2360,3 @@ namespace SharpKVM
     }
     
 }
-
-
