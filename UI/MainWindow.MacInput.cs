@@ -161,32 +161,107 @@ namespace SharpKVM
 
             _ = Task.Run(async () =>
             {
-                MacInputSourceSnapshot afterSnapshot = MacInputSourceSnapshot.Unavailable("not_sampled");
-                bool? switched = null;
-
-                for (int attempt = 0; attempt < MAC_INPUT_SOURCE_VERIFY_MAX_ATTEMPTS; attempt++)
+                await _macInputSourceVerifySemaphore.WaitAsync().ConfigureAwait(false);
+                try
                 {
-                    int delayMs = attempt == 0 ? MAC_INPUT_SOURCE_VERIFY_INITIAL_DELAY_MS : MAC_INPUT_SOURCE_VERIFY_RETRY_DELAY_MS;
-                    await Task.Delay(delayMs).ConfigureAwait(false);
+                    var verifyResult = await CaptureSwitchResultAsync(beforeSnapshot).ConfigureAwait(false);
+                    string switchedText = verifyResult.Switched.HasValue ? (verifyResult.Switched.Value ? "true" : "false") : "unknown";
+                    string message =
+                        $"[MacInput][Verify] trigger={triggerKey} route={route} before={beforeSnapshot.ToLogValue()} after={verifyResult.AfterSnapshot.ToLogValue()} switched={switchedText}";
 
-                    afterSnapshot = MacInputSourceStateProbe.Capture();
-                    if (beforeSnapshot.IsAvailable && afterSnapshot.IsAvailable)
+                    Dispatcher.UIThread.Post(() => Log(message));
+                    SendClientDiagnosticLogToServer(message);
+
+                    if (triggerKey == KeyCode.VcCapsLock &&
+                        string.Equals(route, "capslock_direct_toggle", StringComparison.Ordinal) &&
+                        verifyResult.Switched != true)
                     {
-                        switched = !string.Equals(beforeSnapshot.Fingerprint, afterSnapshot.Fingerprint, StringComparison.Ordinal);
-                        if (switched == true)
-                        {
-                            break;
-                        }
+                        MacInputSourceSnapshot fallbackBaseline = verifyResult.AfterSnapshot.IsAvailable
+                            ? verifyResult.AfterSnapshot
+                            : beforeSnapshot;
+                        await TryFallbackViaSymbolicHotkeyAsync(triggerKey, fallbackBaseline).ConfigureAwait(false);
                     }
                 }
-
-                string switchedText = switched.HasValue ? (switched.Value ? "true" : "false") : "unknown";
-                string message =
-                    $"[MacInput][Verify] trigger={triggerKey} route={route} before={beforeSnapshot.ToLogValue()} after={afterSnapshot.ToLogValue()} switched={switchedText}";
-
-                Dispatcher.UIThread.Post(() => Log(message));
-                SendClientDiagnosticLogToServer(message);
+                finally
+                {
+                    _macInputSourceVerifySemaphore.Release();
+                }
             });
+        }
+
+        private async Task<(MacInputSourceSnapshot AfterSnapshot, bool? Switched)> CaptureSwitchResultAsync(MacInputSourceSnapshot beforeSnapshot)
+        {
+            MacInputSourceSnapshot afterSnapshot = MacInputSourceSnapshot.Unavailable("not_sampled");
+            bool? switched = null;
+
+            for (int attempt = 0; attempt < MAC_INPUT_SOURCE_VERIFY_MAX_ATTEMPTS; attempt++)
+            {
+                int delayMs = attempt == 0 ? MAC_INPUT_SOURCE_VERIFY_INITIAL_DELAY_MS : MAC_INPUT_SOURCE_VERIFY_RETRY_DELAY_MS;
+                await Task.Delay(delayMs).ConfigureAwait(false);
+
+                afterSnapshot = MacInputSourceStateProbe.Capture();
+                if (beforeSnapshot.IsAvailable && afterSnapshot.IsAvailable)
+                {
+                    switched = !string.Equals(beforeSnapshot.Fingerprint, afterSnapshot.Fingerprint, StringComparison.Ordinal);
+                    if (switched == true)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return (afterSnapshot, switched);
+        }
+
+        private async Task TryFallbackViaSymbolicHotkeyAsync(KeyCode triggerKey, MacInputSourceSnapshot baselineSnapshot)
+        {
+            var hotkeys = _macInputSourceHotkeys;
+            if (hotkeys == null)
+            {
+                string unavailableMessage = $"[MacInput][Verify] trigger={triggerKey} route=capslock_fallback_symbolic result=skipped_no_hotkeys";
+                Dispatcher.UIThread.Post(() => Log(unavailableMessage));
+                SendClientDiagnosticLogToServer(unavailableMessage);
+                return;
+            }
+
+            bool hasCandidate = false;
+            foreach (var hotkey in hotkeys.Enumerate())
+            {
+                if (hotkey.TriggerKey == KeyCode.VcCapsLock)
+                {
+                    continue;
+                }
+
+                hasCandidate = true;
+                string fallbackRoute = $"capslock_fallback_symbolic_{hotkey.SymbolicHotkeyId}";
+                if (!MacInputSourceSwitcher.Execute(hotkey))
+                {
+                    string executeFailMessage =
+                        $"[MacInput][Verify] trigger={triggerKey} route={fallbackRoute} before={baselineSnapshot.ToLogValue()} after=n/a switched=false reason=execute_failed:{MacInputSourceSwitcher.LastError}";
+                    Dispatcher.UIThread.Post(() => Log(executeFailMessage));
+                    SendClientDiagnosticLogToServer(executeFailMessage);
+                    continue;
+                }
+
+                var fallbackResult = await CaptureSwitchResultAsync(baselineSnapshot).ConfigureAwait(false);
+                string switchedText = fallbackResult.Switched.HasValue ? (fallbackResult.Switched.Value ? "true" : "false") : "unknown";
+                string fallbackMessage =
+                    $"[MacInput][Verify] trigger={triggerKey} route={fallbackRoute} before={baselineSnapshot.ToLogValue()} after={fallbackResult.AfterSnapshot.ToLogValue()} switched={switchedText}";
+                Dispatcher.UIThread.Post(() => Log(fallbackMessage));
+                SendClientDiagnosticLogToServer(fallbackMessage);
+
+                if (fallbackResult.Switched == true)
+                {
+                    return;
+                }
+            }
+
+            if (!hasCandidate)
+            {
+                string noCandidateMessage = $"[MacInput][Verify] trigger={triggerKey} route=capslock_fallback_symbolic result=skipped_no_candidate";
+                Dispatcher.UIThread.Post(() => Log(noCandidateMessage));
+                SendClientDiagnosticLogToServer(noCandidateMessage);
+            }
         }
 
         private void ReportMacInputSourceVerificationFailure(KeyCode triggerKey, string route, string reason, MacInputSourceSnapshot beforeSnapshot)

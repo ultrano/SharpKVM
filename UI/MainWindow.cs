@@ -154,6 +154,7 @@ namespace SharpKVM
         private MacInputSourceHotkeys? _macInputSourceHotkeys;
         private DateTime _lastMacInputSourceHotkeyRefresh = DateTime.MinValue;
         private DateTime _lastMacAccessibilityStatusLogTime = DateTime.MinValue;
+        private readonly SemaphoreSlim _macInputSourceVerifySemaphore = new SemaphoreSlim(1, 1);
         private readonly HashSet<KeyCode> _remotePressedKeys = new HashSet<KeyCode>();
         private readonly HashSet<KeyCode> _forwardedRemoteKeys = new HashSet<KeyCode>();
         private readonly HashSet<KeyCode> _consumedInputSourceKeys = new HashSet<KeyCode>();
@@ -190,7 +191,7 @@ namespace SharpKVM
 
         public MainWindow()
         {
-            this.Title = "SharpKVM (v7.8.15)";
+            this.Title = "SharpKVM (v7.8.16)";
             this.Width = 1000;
             this.Height = 750;
             this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
