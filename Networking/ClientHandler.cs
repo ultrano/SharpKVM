@@ -23,16 +23,16 @@ namespace SharpKVM
         public double WheelSensitivity { get; set; } = 1.0;
 
         private readonly BlockingCollection<byte[]> _sendQueue = new BlockingCollection<byte[]>();
-        private readonly MainWindow _ownerWindow;
+        private readonly IClientHandlerMessageSink _messageSink;
         private int _isClosed;
 
         // SECURITY NOTE: Network stream is used without TLS. All packets (keystrokes, mouse,
         // clipboard text/files/images) are transmitted in plaintext. Wrap with SslStream for encryption.
-        public ClientHandler(TcpClient s, MainWindow parent)
+        internal ClientHandler(TcpClient s, IClientHandlerMessageSink messageSink)
         {
-            Socket = s;
+            Socket = s ?? throw new ArgumentNullException(nameof(s));
             _stream = s.GetStream();
-            _ownerWindow = parent;
+            _messageSink = messageSink ?? throw new ArgumentNullException(nameof(messageSink));
             Name = "Client-" + ((IPEndPoint)s.Client.RemoteEndPoint!).Address;
             Task.Run(SendingLoop)
                 .ContinueWith(t => Debug.WriteLine($"[SharpKVM] SendingLoop task failed for {Name}: {t.Exception?.GetBaseException().Message}"), TaskContinuationOptions.OnlyOnFaulted);
@@ -56,44 +56,15 @@ namespace SharpKVM
             }
         }
 
-        private async Task<bool> ReadExactAsync(byte[] buffer, int size)
-        {
-            int totalRead = 0;
-            while (totalRead < size)
-            {
-                int bytesRead = await _stream.ReadAsync(buffer, totalRead, size - totalRead).ConfigureAwait(false);
-                if (bytesRead == 0) return false;
-                totalRead += bytesRead;
-            }
-
-            return true;
-        }
-
-        private async Task<byte[]?> ReadPayloadAsync(PacketType type, int length)
-        {
-            if (!ProtocolPayloadLimits.IsValidPayloadLength(type, length))
-            {
-                return null;
-            }
-
-            byte[] payload = new byte[length];
-            if (!await ReadExactAsync(payload, length).ConfigureAwait(false))
-            {
-                return null;
-            }
-
-            return payload;
-        }
-
         public async Task<bool> HandshakeAsync()
         {
             try
             {
-                int size = System.Runtime.InteropServices.Marshal.SizeOf<InputPacket>();
-                byte[] buffer = new byte[size];
-                if (!await ReadExactAsync(buffer, size).ConfigureAwait(false)) return false;
-
-                if (!InputPacketSerializer.TryDeserialize(buffer, out InputPacket p)) return false;
+                byte[] headerBuffer = ProtocolStreamReader.CreateInputPacketHeaderBuffer();
+                var (status, p) = await ProtocolStreamReader
+                    .ReadInputPacketHeaderAsync(_stream, headerBuffer)
+                    .ConfigureAwait(false);
+                if (status != InputPacketHeaderReadStatus.Success) return false;
 
                 if (p.Type == PacketType.Hello)
                 {
@@ -110,51 +81,75 @@ namespace SharpKVM
 
         public void StartReading()
         {
-            var owner = _ownerWindow;
+            var sink = _messageSink;
 
             _ = Task.Run(async () =>
             {
-                byte[] buffer = new byte[System.Runtime.InteropServices.Marshal.SizeOf<InputPacket>()];
+                byte[] headerBuffer = ProtocolStreamReader.CreateInputPacketHeaderBuffer();
                 try
                 {
                     while (true)
                     {
-                        if (!await ReadExactAsync(buffer, buffer.Length).ConfigureAwait(false)) break;
-
-                        if (!InputPacketSerializer.TryDeserialize(buffer, out InputPacket packet)) continue;
-
-                        if (packet.Type == PacketType.Clipboard)
-                        {
-                            var textBytes = await ReadPayloadAsync(PacketType.Clipboard, packet.X).ConfigureAwait(false);
-                            if (textBytes == null) break;
-
-                            string text = Encoding.UTF8.GetString(textBytes);
-                            owner.SetRemoteClipboard(text);
-                        }
-                        else if (packet.Type == PacketType.PlatformInfo)
-                        {
-                            IsMac = (packet.KeyCode == 1);
-                        }
-                        else if (packet.Type == PacketType.ClipboardFile)
-                        {
-                            var fileBytes = await ReadPayloadAsync(PacketType.ClipboardFile, packet.X).ConfigureAwait(false);
-                            if (fileBytes == null) break;
-
-                            owner.ProcessReceivedFiles(fileBytes);
-                        }
-                        else if (packet.Type == PacketType.ClipboardImage)
-                        {
-                            var imageBytes = await ReadPayloadAsync(PacketType.ClipboardImage, packet.X).ConfigureAwait(false);
-                            if (imageBytes == null) break;
-
-                            owner.ProcessReceivedImage(imageBytes);
-                        }
+                        var (status, packet) = await ProtocolStreamReader
+                            .ReadInputPacketHeaderAsync(_stream, headerBuffer)
+                            .ConfigureAwait(false);
+                        if (status == InputPacketHeaderReadStatus.EndOfStream) break;
+                        if (status == InputPacketHeaderReadStatus.InvalidHeader) continue;
+                        if (!await TryHandleIncomingPacketAsync(packet, sink).ConfigureAwait(false)) break;
                     }
                 }
                 catch (Exception ex) { Debug.WriteLine($"[SharpKVM] ReadLoop error for {Name}: {ex.Message}"); }
 
                 Disconnected?.Invoke(this);
             }).ContinueWith(t => Debug.WriteLine($"[SharpKVM] ReadLoop task failed for {Name}: {t.Exception?.GetBaseException().Message}"), TaskContinuationOptions.OnlyOnFaulted);
+        }
+
+        private Task<bool> TryHandleIncomingPacketAsync(InputPacket packet, IClientHandlerMessageSink sink)
+        {
+            return packet.Type switch
+            {
+                PacketType.Clipboard => HandleClipboardPacketAsync(packet, sink),
+                PacketType.PlatformInfo => Task.FromResult(HandlePlatformInfoPacket(packet)),
+                PacketType.ClipboardFile => HandleClipboardFilePacketAsync(packet, sink),
+                PacketType.ClipboardImage => HandleClipboardImagePacketAsync(packet, sink),
+                _ => Task.FromResult(true)
+            };
+        }
+
+        private async Task<bool> HandleClipboardPacketAsync(InputPacket packet, IClientHandlerMessageSink sink)
+        {
+            var textBytes = await ProtocolStreamReader.ReadPayloadAsync(_stream, PacketType.Clipboard, packet.X).ConfigureAwait(false);
+            if (textBytes == null) return false;
+
+            string text = Encoding.UTF8.GetString(textBytes);
+            sink.SetRemoteClipboard(text);
+            return true;
+        }
+
+        private bool HandlePlatformInfoPacket(InputPacket packet)
+        {
+            IsMac = IsMacPlatformKeyCode(packet.KeyCode);
+            return true;
+        }
+
+        private static bool IsMacPlatformKeyCode(int keyCode) => keyCode == 1;
+
+        private async Task<bool> HandleClipboardFilePacketAsync(InputPacket packet, IClientHandlerMessageSink sink)
+        {
+            var fileBytes = await ProtocolStreamReader.ReadPayloadAsync(_stream, PacketType.ClipboardFile, packet.X).ConfigureAwait(false);
+            if (fileBytes == null) return false;
+
+            sink.ProcessReceivedFiles(fileBytes);
+            return true;
+        }
+
+        private async Task<bool> HandleClipboardImagePacketAsync(InputPacket packet, IClientHandlerMessageSink sink)
+        {
+            var imageBytes = await ProtocolStreamReader.ReadPayloadAsync(_stream, PacketType.ClipboardImage, packet.X).ConfigureAwait(false);
+            if (imageBytes == null) return false;
+
+            sink.ProcessReceivedImage(imageBytes);
+            return true;
         }
 
         public void SendClipboardPacket(string text)
@@ -216,5 +211,12 @@ namespace SharpKVM
             Close();
             try { _sendQueue.Dispose(); } catch (ObjectDisposedException) { }
         }
+    }
+
+    internal interface IClientHandlerMessageSink
+    {
+        void SetRemoteClipboard(string text);
+        void ProcessReceivedFiles(byte[] zipData);
+        void ProcessReceivedImage(byte[] imgData);
     }
 }

@@ -77,6 +77,22 @@ public class MacInputSourceHotkeyMapperTests
     }
 
     [Fact]
+    public void IsCapsLockPlainSwitch_True_WhenOnlyCapsLockFlagExists()
+    {
+        var hotkey = new MacInputSourceHotkey
+        {
+            Name = "InputSourcePrimary",
+            SymbolicHotkeyId = 60,
+            MacVirtualKeyCode = 57,
+            MacModifierFlags = 0x00010000,
+            TriggerKey = KeyCode.VcCapsLock,
+            RequiredModifiers = MacModifierMask.CapsLock
+        };
+
+        Assert.True(hotkey.IsCapsLockPlainSwitch);
+    }
+
+    [Fact]
     public void ComputeCapsLockOptionEnabled_True_WhenAnyHotkeyIsPlainCapsLock()
     {
         var hotkey = new MacInputSourceHotkey
@@ -110,6 +126,42 @@ public class MacInputSourceHotkeyMapperTests
         var enabled = MacInputSourceHotkeys.ComputeCapsLockOptionEnabled(hotkey, null);
 
         Assert.False(enabled);
+    }
+
+    [Fact]
+    public void ComputeCapsLockOptionEnabled_True_WhenCapsLockFlagOnlyHotkeyExists()
+    {
+        var hotkey = new MacInputSourceHotkey
+        {
+            Name = "InputSourcePrimary",
+            SymbolicHotkeyId = 60,
+            MacVirtualKeyCode = 57,
+            MacModifierFlags = 0x00010000,
+            TriggerKey = KeyCode.VcCapsLock,
+            RequiredModifiers = MacModifierMask.CapsLock
+        };
+
+        var enabled = MacInputSourceHotkeys.ComputeCapsLockOptionEnabled(hotkey, null);
+
+        Assert.True(enabled);
+    }
+
+    [Fact]
+    public void Matches_True_ForCapsLockTrigger_WhenOnlyTriggerKeyIsPressed()
+    {
+        var hotkey = new MacInputSourceHotkey
+        {
+            Name = "InputSourcePrimary",
+            SymbolicHotkeyId = 60,
+            MacVirtualKeyCode = 57,
+            MacModifierFlags = 0x00010000,
+            TriggerKey = KeyCode.VcCapsLock,
+            RequiredModifiers = MacModifierMask.CapsLock
+        };
+
+        var pressed = new HashSet<KeyCode> { KeyCode.VcCapsLock };
+
+        Assert.True(hotkey.Matches(pressed, KeyCode.VcCapsLock));
     }
 
     [Fact]

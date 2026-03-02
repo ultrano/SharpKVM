@@ -38,4 +38,43 @@ public class LaunchArgumentParserTests
         Assert.False(result.AutoStartClientMode);
         Assert.Equal(string.Empty, result.AutoServerIP);
     }
+
+    [Fact]
+    public void Parse_NullArgs_ReturnsDefaults()
+    {
+        var result = LaunchArgumentParser.Parse(null!);
+
+        Assert.False(result.AutoStartClientMode);
+        Assert.Equal(string.Empty, result.AutoServerIP);
+    }
+
+    [Theory]
+    [InlineData("client")]
+    [InlineData("--client")]
+    [InlineData("-c")]
+    public void Parse_ClientFlagWithoutIp_EnablesAutoStartWithEmptyIp(string flag)
+    {
+        var result = LaunchArgumentParser.Parse([flag]);
+
+        Assert.True(result.AutoStartClientMode);
+        Assert.Equal(string.Empty, result.AutoServerIP);
+    }
+
+    [Fact]
+    public void Parse_ClientThenServer_PreservesClientModeAndUsesLatestServerIp()
+    {
+        var result = LaunchArgumentParser.Parse(["--client", "10.0.0.10", "--server", "10.0.0.20"]);
+
+        Assert.True(result.AutoStartClientMode);
+        Assert.Equal("10.0.0.20", result.AutoServerIP);
+    }
+
+    [Fact]
+    public void Parse_WhitespaceAroundFlagAndIp_IsTrimmed()
+    {
+        var result = LaunchArgumentParser.Parse(["  --client  ", " 10.0.0.30 "]);
+
+        Assert.True(result.AutoStartClientMode);
+        Assert.Equal("10.0.0.30", result.AutoServerIP);
+    }
 }
