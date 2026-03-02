@@ -72,14 +72,21 @@ namespace SharpKVM
                 var modifierMask = MacInputSourceHotkeyMapper.ToModifierMask(_remotePressedKeys, triggerKey);
                 if (modifierMask == MacModifierMask.None)
                 {
+                    var beforeSnapshot = MacInputSourceStateProbe.Capture();
                     if (!MacInputSourceSwitcher.ExecuteCapsLockToggle())
                     {
                         Log($"[MacInput][RX] CapsLock toggle execution failed: {MacInputSourceSwitcher.LastError}");
+                        ReportMacInputSourceVerificationFailure(
+                            triggerKey,
+                            "capslock_direct_toggle",
+                            $"toggle_failed:{MacInputSourceSwitcher.LastError}",
+                            beforeSnapshot);
                         return false;
                     }
 
                     ConsumeRemotePressedKeysForInputSourceHotkey("capslock_direct_toggle");
                     Log("Input Source Hotkey Triggered (CapsLock)");
+                    VerifyAndReportMacInputSourceSwitchAsync(triggerKey, "capslock_direct_toggle", beforeSnapshot);
                     return true;
                 }
 
@@ -91,6 +98,7 @@ namespace SharpKVM
             else if (triggerKey == KeyCode.VcCapsLock && isDiagnosticKey)
             {
                 Log("[MacInput][RX] CapsLock input source option is disabled; skipping direct toggle.");
+                SendClientDiagnosticLogToServer("[MacInput][Verify] trigger=VcCapsLock route=capslock_direct_toggle result=skipped_caps_option_disabled");
             }
 
             if (_macInputSourceHotkeys == null)
@@ -115,16 +123,24 @@ namespace SharpKVM
                     {
                         Log($"[MacInput][RX] Candidate matched but blocked by caps option: {DescribeMacHotkey(hotkey)}");
                     }
+                    SendClientDiagnosticLogToServer($"[MacInput][Verify] trigger={triggerKey} route=symbolic_{hotkey.SymbolicHotkeyId} result=blocked_caps_option_disabled");
                     continue;
                 }
+                var beforeSnapshot = MacInputSourceStateProbe.Capture();
                 if (!MacInputSourceSwitcher.Execute(hotkey))
                 {
                     Log($"[MacInput][RX] Hotkey execute failed: {DescribeMacHotkey(hotkey)}, error={MacInputSourceSwitcher.LastError}");
+                    ReportMacInputSourceVerificationFailure(
+                        triggerKey,
+                        $"symbolic_{hotkey.SymbolicHotkeyId}",
+                        $"execute_failed:{MacInputSourceSwitcher.LastError}",
+                        beforeSnapshot);
                     return false;
                 }
                 ConsumeRemotePressedKeysForInputSourceHotkey($"symbolic_{hotkey.SymbolicHotkeyId}");
 
                 Log($"Input Source Hotkey Triggered ({hotkey.SymbolicHotkeyId})");
+                VerifyAndReportMacInputSourceSwitchAsync(triggerKey, $"symbolic_{hotkey.SymbolicHotkeyId}", beforeSnapshot);
                 return true;
             }
 
@@ -134,6 +150,51 @@ namespace SharpKVM
             }
 
             return false;
+        }
+
+        private void VerifyAndReportMacInputSourceSwitchAsync(KeyCode triggerKey, string route, MacInputSourceSnapshot beforeSnapshot)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                MacInputSourceSnapshot afterSnapshot = MacInputSourceSnapshot.Unavailable("not_sampled");
+                bool? switched = null;
+
+                for (int attempt = 0; attempt < MAC_INPUT_SOURCE_VERIFY_MAX_ATTEMPTS; attempt++)
+                {
+                    int delayMs = attempt == 0 ? MAC_INPUT_SOURCE_VERIFY_INITIAL_DELAY_MS : MAC_INPUT_SOURCE_VERIFY_RETRY_DELAY_MS;
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+
+                    afterSnapshot = MacInputSourceStateProbe.Capture();
+                    if (beforeSnapshot.IsAvailable && afterSnapshot.IsAvailable)
+                    {
+                        switched = !string.Equals(beforeSnapshot.Fingerprint, afterSnapshot.Fingerprint, StringComparison.Ordinal);
+                        if (switched == true)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                string switchedText = switched.HasValue ? (switched.Value ? "true" : "false") : "unknown";
+                string message =
+                    $"[MacInput][Verify] trigger={triggerKey} route={route} before={beforeSnapshot.ToLogValue()} after={afterSnapshot.ToLogValue()} switched={switchedText}";
+
+                Dispatcher.UIThread.Post(() => Log(message));
+                SendClientDiagnosticLogToServer(message);
+            });
+        }
+
+        private void ReportMacInputSourceVerificationFailure(KeyCode triggerKey, string route, string reason, MacInputSourceSnapshot beforeSnapshot)
+        {
+            string message =
+                $"[MacInput][Verify] trigger={triggerKey} route={route} before={beforeSnapshot.ToLogValue()} after=n/a switched=false reason={reason}";
+            Log(message);
+            SendClientDiagnosticLogToServer(message);
         }
 
         private static string DescribeMacHotkey(MacInputSourceHotkey hotkey)

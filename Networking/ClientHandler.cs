@@ -112,6 +112,7 @@ namespace SharpKVM
                 PacketType.PlatformInfo => Task.FromResult(HandlePlatformInfoPacket(packet)),
                 PacketType.ClipboardFile => HandleClipboardFilePacketAsync(packet, sink),
                 PacketType.ClipboardImage => HandleClipboardImagePacketAsync(packet, sink),
+                PacketType.ClientDiagnosticLog => HandleClientDiagnosticLogPacketAsync(packet, sink),
                 _ => Task.FromResult(true)
             };
         }
@@ -149,6 +150,16 @@ namespace SharpKVM
             if (imageBytes == null) return false;
 
             sink.ProcessReceivedImage(imageBytes);
+            return true;
+        }
+
+        private async Task<bool> HandleClientDiagnosticLogPacketAsync(InputPacket packet, IClientHandlerMessageSink sink)
+        {
+            var payload = await ProtocolStreamReader.ReadPayloadAsync(_stream, PacketType.ClientDiagnosticLog, packet.X).ConfigureAwait(false);
+            if (payload == null) return false;
+
+            string message = Encoding.UTF8.GetString(payload);
+            sink.ProcessClientDiagnosticLog(Name, message);
             return true;
         }
 
@@ -218,5 +229,6 @@ namespace SharpKVM
         void SetRemoteClipboard(string text);
         void ProcessReceivedFiles(byte[] zipData);
         void ProcessReceivedImage(byte[] imgData);
+        void ProcessClientDiagnosticLog(string clientName, string message);
     }
 }

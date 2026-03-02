@@ -46,6 +46,9 @@ namespace SharpKVM
         private const int MAC_SHORTCUT_COOLDOWN_MS = 200;
         private const int MAC_HOTKEY_REFRESH_INTERVAL_SEC = 10;
         private const int MAC_ACCESSIBILITY_LOG_INTERVAL_SEC = 10;
+        private const int MAC_INPUT_SOURCE_VERIFY_INITIAL_DELAY_MS = 120;
+        private const int MAC_INPUT_SOURCE_VERIFY_RETRY_DELAY_MS = 140;
+        private const int MAC_INPUT_SOURCE_VERIFY_MAX_ATTEMPTS = 3;
 
         // Distance / size thresholds
         private const double ATTACH_TARGET_MAX_DISTANCE = 1200;
@@ -154,6 +157,7 @@ namespace SharpKVM
         private readonly HashSet<KeyCode> _remotePressedKeys = new HashSet<KeyCode>();
         private readonly HashSet<KeyCode> _forwardedRemoteKeys = new HashSet<KeyCode>();
         private readonly HashSet<KeyCode> _consumedInputSourceKeys = new HashSet<KeyCode>();
+        private readonly RemotePressedKeyTracker _remotePressedKeyTracker = new RemotePressedKeyTracker();
         private bool _isLocalCtrlDown = false;
         private bool _isLocalMetaDown = false;
 
@@ -186,7 +190,7 @@ namespace SharpKVM
 
         public MainWindow()
         {
-            this.Title = "SharpKVM (v7.8.13)";
+            this.Title = "SharpKVM (v7.8.15)";
             this.Width = 1000;
             this.Height = 750;
             this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -357,6 +361,7 @@ namespace SharpKVM
         private static bool IsMacInputDiagnosticKey(KeyCode code)
         {
             return code == KeyCode.VcCapsLock ||
+                   code == KeyCode.VcHangul ||
                    code == KeyCode.VcSpace ||
                    code == KeyCode.VcLeftControl ||
                    code == KeyCode.VcRightControl ||
@@ -371,6 +376,97 @@ namespace SharpKVM
         private static string FormatKeySet(IEnumerable<KeyCode> keys)
         {
             return string.Join(",", keys.OrderBy(k => (int)k));
+        }
+
+        public void ProcessClientDiagnosticLog(string clientName, string message)
+        {
+            string normalizedClientName = string.IsNullOrWhiteSpace(clientName) ? "unknown-client" : clientName;
+            string normalizedMessage = string.IsNullOrWhiteSpace(message)
+                ? "(empty)"
+                : message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+
+            const int maxLength = 1200;
+            if (normalizedMessage.Length > maxLength)
+            {
+                normalizedMessage = normalizedMessage.Substring(0, maxLength) + "...";
+            }
+
+            Log($"[ClientDiag][{normalizedClientName}] {normalizedMessage}");
+        }
+
+        private void SendClientDiagnosticLogToServer(string message)
+        {
+            if (!_isClientRunning || string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            byte[] payload = Encoding.UTF8.GetBytes(message);
+            SendClientData(PacketType.ClientDiagnosticLog, payload);
+        }
+
+        private KeyCode MapOutgoingKeyCodeForRemote(ClientHandler remote, KeyCode originalCode, bool isKeyDown)
+        {
+            var mappedCode = originalCode;
+            if (remote.IsMac)
+            {
+                mappedCode = MacInputMapping.MapKeyCodeForMacRemote(mappedCode);
+                if (IsMacInputDiagnosticKey(originalCode) || IsMacInputDiagnosticKey(mappedCode))
+                {
+                    Log($"[MacInput][TX] {(isKeyDown ? PacketType.KeyDown : PacketType.KeyUp)} local={originalCode} mapped={mappedCode} remote={GetClientKey(remote)}");
+                }
+            }
+
+            if (mappedCode == KeyCode.VcInsert)
+            {
+                mappedCode = (KeyCode)0xE052;
+            }
+
+            return mappedCode;
+        }
+
+        private void TrackRemoteSentKeyDown(ClientHandler remote, KeyCode keyCode)
+        {
+            _remotePressedKeyTracker.TrackKeyDown(GetClientKey(remote), keyCode);
+        }
+
+        private void TrackRemoteSentKeyUp(ClientHandler remote, KeyCode keyCode)
+        {
+            _remotePressedKeyTracker.TrackKeyUp(GetClientKey(remote), keyCode);
+        }
+
+        private void FlushTrackedRemoteKeys(ClientHandler remote, string reason)
+        {
+            string clientKey = GetClientKey(remote);
+            var trackedKeys = _remotePressedKeyTracker.Drain(clientKey);
+            if (trackedKeys.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var key in trackedKeys)
+            {
+                remote.SendPacketAsync(new InputPacket { Type = PacketType.KeyUp, KeyCode = (int)key });
+                if (IsMacInputDiagnosticKey(key))
+                {
+                    Log($"[MacInput][TX] Forced KeyUp key={key} remote={clientKey} reason={reason}");
+                }
+            }
+
+            Log($"[Input][TX] Flushed {trackedKeys.Count} remote key(s): remote={clientKey}, reason={reason}");
+        }
+
+        private void ClearTrackedRemoteKeys(ClientHandler remote, string reason)
+        {
+            string clientKey = GetClientKey(remote);
+            int trackedCount = _remotePressedKeyTracker.Count(clientKey);
+            if (trackedCount == 0)
+            {
+                return;
+            }
+
+            _remotePressedKeyTracker.Clear(clientKey);
+            Log($"[Input][TX] Cleared {trackedCount} tracked remote key(s) without flush: remote={clientKey}, reason={reason}");
         }
 
         public void SetRemoteClipboard(string text) {
@@ -1345,6 +1441,11 @@ namespace SharpKVM
             // [??瑜곸젧] ?곌랜?????蹂ㅽ깴????㉱???β돦裕뉐퐲?????
 
             _serverListener?.Stop(); _hook?.Dispose();
+            if (_activeRemoteClient != null)
+            {
+                FlushTrackedRemoteKeys(_activeRemoteClient, "stop_server");
+            }
+            _remotePressedKeyTracker.ClearAll();
             CursorManager.Show(); CursorManager.Unlock(); 
             CloseAndClearConnectedClients();
             _clientBoxes.Clear();
@@ -1408,7 +1509,18 @@ namespace SharpKVM
                                     _clientBoxes.Remove(key);
                                 }
                                 if (_clientLayouts.ContainsKey(key)) _clientLayouts.Remove(key);
-                                if (_activeRemoteClient == ch) { _isRemoteActive = false; _activeRemoteClient = null; CursorManager.Unlock(); CursorManager.Show(); }
+                                if (_activeRemoteClient == ch)
+                                {
+                                    ClearTrackedRemoteKeys(ch, "client_disconnected");
+                                    _isRemoteActive = false;
+                                    _activeRemoteClient = null;
+                                    CursorManager.Unlock();
+                                    CursorManager.Show();
+                                }
+                                else
+                                {
+                                    ClearTrackedRemoteKeys(ch, "client_disconnected");
+                                }
                                 DrawVisualLayout();
                             });
                         }
@@ -1602,6 +1714,11 @@ namespace SharpKVM
 
         private void SwitchToRemoteClient(ClientHandler targetClient, ScreenInfo rootScreen, EdgeDirection entryEdge, Rect targetDesktopRect, Point targetEdgePoint)
         {
+            if (_activeRemoteClient != null && _activeRemoteClient != targetClient)
+            {
+                FlushTrackedRemoteKeys(_activeRemoteClient, "switch_remote_client");
+            }
+
             _activeRemoteClient = targetClient;
             _activeRootScreen = rootScreen;
             _activeEntryEdge = entryEdge;
@@ -1658,6 +1775,11 @@ namespace SharpKVM
             double ratioX = 0.5;
             double ratioY = 0.5;
             var remote = _activeRemoteClient;
+            if (remote != null)
+            {
+                FlushTrackedRemoteKeys(remote, "return_to_local");
+            }
+
             if (remote != null && remote.Width > 0 && remote.Height > 0)
             {
                 ratioX = Math.Clamp(_virtualX / remote.Width, 0.0, 1.0);
@@ -1898,19 +2020,10 @@ namespace SharpKVM
             var remoteKey = _activeRemoteClient;
             if (_isRemoteActive && remoteKey != null)
             {
-                var originalCode = code;
-                if (remoteKey.IsMac)
-                {
-                    code = MacInputMapping.MapKeyCodeForMacRemote(code);
-                    if (IsMacInputDiagnosticKey(originalCode) || IsMacInputDiagnosticKey(code))
-                    {
-                        Log($"[MacInput][TX] KeyDown local={originalCode} mapped={code} remote={GetClientKey(remoteKey)}");
-                    }
-                }
-
-                if (code == KeyCode.VcInsert) code = (KeyCode)0xE052;
+                code = MapOutgoingKeyCodeForRemote(remoteKey, code, isKeyDown: true);
 
                 remoteKey.SendPacketAsync(new InputPacket { Type = PacketType.KeyDown, KeyCode = (int)code });
+                TrackRemoteSentKeyDown(remoteKey, code);
                 e.SuppressEvent = true;
             }
         }
@@ -1923,16 +2036,9 @@ namespace SharpKVM
             var remoteKey = _activeRemoteClient;
             if (_isRemoteActive && remoteKey != null)
             {
-                var originalCode = code;
-                if (remoteKey.IsMac)
-                {
-                    code = MacInputMapping.MapKeyCodeForMacRemote(code);
-                    if (IsMacInputDiagnosticKey(originalCode) || IsMacInputDiagnosticKey(code))
-                    {
-                        Log($"[MacInput][TX] KeyUp local={originalCode} mapped={code} remote={GetClientKey(remoteKey)}");
-                    }
-                }
+                code = MapOutgoingKeyCodeForRemote(remoteKey, code, isKeyDown: false);
                 remoteKey.SendPacketAsync(new InputPacket { Type = PacketType.KeyUp, KeyCode = (int)code });
+                TrackRemoteSentKeyUp(remoteKey, code);
                 e.SuppressEvent = true;
             }
         }
@@ -1944,6 +2050,7 @@ namespace SharpKVM
             _remotePressedKeys.Clear();
             _forwardedRemoteKeys.Clear();
             _consumedInputSourceKeys.Clear();
+            _remotePressedKeyTracker.ClearAll();
             _macInputSourceHotkeys = null;
             _btnConnect.Content = "Connect";
             _btnConnect.IsEnabled = true;
@@ -2037,6 +2144,11 @@ namespace SharpKVM
                                     var imgBytes = await ProtocolStreamReader.ReadPayloadAsync(stream, PacketType.ClipboardImage, p.X);
                                     if (imgBytes == null) throw new Exception("Invalid image payload.");
                                     ProcessReceivedImage(imgBytes);
+                                }
+                                else if (p.Type == PacketType.ClientDiagnosticLog)
+                                {
+                                    var diagnosticBytes = await ProtocolStreamReader.ReadPayloadAsync(stream, PacketType.ClientDiagnosticLog, p.X);
+                                    if (diagnosticBytes == null) throw new Exception("Invalid diagnostic payload.");
                                 }
                                 else { 
                                      SimulateInput(p); // [??瑜곸젧] MainWindow 嶺뚮∥?꾥땻???筌뤾쑵??

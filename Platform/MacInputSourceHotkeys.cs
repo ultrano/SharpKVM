@@ -26,7 +26,7 @@ public sealed class MacInputSourceHotkey
     public bool IsCapsLockPlainSwitch =>
         TriggerKey == KeyCode.VcCapsLock &&
         MacVirtualKeyCode == 57 &&
-        RequiredModifiers == MacModifierMask.None;
+        MacInputSourceHotkeyMapper.NormalizeRequiredModifiers(RequiredModifiers, TriggerKey) == MacModifierMask.None;
 
     public bool Matches(IReadOnlyCollection<KeyCode> pressedKeys, KeyCode triggerKey)
     {
@@ -35,7 +35,8 @@ public sealed class MacInputSourceHotkey
             return false;
         }
 
-        return MacInputSourceHotkeyMapper.ToModifierMask(pressedKeys, triggerKey) == RequiredModifiers;
+        var normalizedRequired = MacInputSourceHotkeyMapper.NormalizeRequiredModifiers(RequiredModifiers, triggerKey);
+        return MacInputSourceHotkeyMapper.ToModifierMask(pressedKeys, triggerKey) == normalizedRequired;
     }
 }
 
@@ -141,5 +142,15 @@ public static class MacInputSourceHotkeyMapper
             }
         }
         return mask;
+    }
+
+    public static MacModifierMask NormalizeRequiredModifiers(MacModifierMask requiredModifiers, KeyCode triggerKey)
+    {
+        if (triggerKey == KeyCode.VcCapsLock)
+        {
+            requiredModifiers &= ~MacModifierMask.CapsLock;
+        }
+
+        return requiredModifiers;
     }
 }

@@ -253,6 +253,30 @@ public class ClientHandlerProtocolTests
     }
 
     [Fact]
+    public async Task StartReading_ValidClientDiagnosticLogPayload_ForwardsLogToSink()
+    {
+        using var harness = await ClientHandlerHarness.CreateAsync();
+
+        var disconnected = harness.WaitForDisconnectedAsync(DefaultTimeout);
+        harness.Handler.StartReading();
+
+        const string message = "[MacInput][Verify] trigger=VcCapsLock route=capslock_direct_toggle switched=true";
+        var payload = Encoding.UTF8.GetBytes(message);
+        await harness.SendPacketAsync(
+            new InputPacket { Type = PacketType.ClientDiagnosticLog, X = payload.Length },
+            payload);
+
+        await WaitUntilAsync(() => harness.Sink.ClientDiagnostics.Count == 1, DefaultTimeout);
+        Assert.Equal(("Client-127.0.0.1", message), harness.Sink.ClientDiagnostics[0]);
+        Assert.Empty(harness.Sink.ClipboardTexts);
+        Assert.Empty(harness.Sink.FilePayloads);
+        Assert.Empty(harness.Sink.ImagePayloads);
+
+        harness.ClosePeer();
+        Assert.True(await disconnected);
+    }
+
+    [Fact]
     public async Task StartReading_MalformedHeaderWithUnknownPacketType_IgnoresPacketAndContinues()
     {
         using var harness = await ClientHandlerHarness.CreateAsync();
@@ -362,6 +386,7 @@ public class ClientHandlerProtocolTests
     [InlineData(PacketType.Clipboard, ProtocolPayloadLimits.MaxClipboardTextBytes + 1)]
     [InlineData(PacketType.ClipboardFile, ProtocolPayloadLimits.MaxClipboardFileBytes + 1)]
     [InlineData(PacketType.ClipboardImage, ProtocolPayloadLimits.MaxClipboardImageBytes + 1)]
+    [InlineData(PacketType.ClientDiagnosticLog, ProtocolPayloadLimits.MaxClientDiagnosticLogBytes + 1)]
     public async Task StartReading_PayloadLengthAboveLimit_DisconnectsWithoutForwarding(PacketType type, int invalidLength)
     {
         using var harness = await ClientHandlerHarness.CreateAsync();
@@ -379,6 +404,7 @@ public class ClientHandlerProtocolTests
         Assert.Empty(harness.Sink.ClipboardTexts);
         Assert.Empty(harness.Sink.FilePayloads);
         Assert.Empty(harness.Sink.ImagePayloads);
+        Assert.Empty(harness.Sink.ClientDiagnostics);
     }
 
     [Theory]
@@ -388,6 +414,8 @@ public class ClientHandlerProtocolTests
     [InlineData(PacketType.ClipboardFile, -1)]
     [InlineData(PacketType.ClipboardImage, 0)]
     [InlineData(PacketType.ClipboardImage, -1)]
+    [InlineData(PacketType.ClientDiagnosticLog, 0)]
+    [InlineData(PacketType.ClientDiagnosticLog, -1)]
     public async Task StartReading_NonPositivePayloadLength_DisconnectsWithoutForwarding(PacketType type, int invalidLength)
     {
         using var harness = await ClientHandlerHarness.CreateAsync();
@@ -405,12 +433,14 @@ public class ClientHandlerProtocolTests
         Assert.Empty(harness.Sink.ClipboardTexts);
         Assert.Empty(harness.Sink.FilePayloads);
         Assert.Empty(harness.Sink.ImagePayloads);
+        Assert.Empty(harness.Sink.ClientDiagnostics);
     }
 
     [Theory]
     [InlineData(PacketType.Clipboard, 8, 3)]
     [InlineData(PacketType.ClipboardFile, 8, 3)]
     [InlineData(PacketType.ClipboardImage, 8, 3)]
+    [InlineData(PacketType.ClientDiagnosticLog, 8, 3)]
     public async Task StartReading_TruncatedPayload_DisconnectsWithoutForwarding(PacketType type, int declaredLength, int actualLength)
     {
         using var harness = await ClientHandlerHarness.CreateAsync();
@@ -433,6 +463,7 @@ public class ClientHandlerProtocolTests
         Assert.Empty(harness.Sink.ClipboardTexts);
         Assert.Empty(harness.Sink.FilePayloads);
         Assert.Empty(harness.Sink.ImagePayloads);
+        Assert.Empty(harness.Sink.ClientDiagnostics);
     }
 
     [Fact]
@@ -579,10 +610,12 @@ public class ClientHandlerProtocolTests
         public List<string> ClipboardTexts { get; } = new();
         public List<byte[]> FilePayloads { get; } = new();
         public List<byte[]> ImagePayloads { get; } = new();
+        public List<(string ClientName, string Message)> ClientDiagnostics { get; } = new();
 
         public void SetRemoteClipboard(string text) => ClipboardTexts.Add(text);
         public void ProcessReceivedFiles(byte[] zipData) => FilePayloads.Add(zipData);
         public void ProcessReceivedImage(byte[] imgData) => ImagePayloads.Add(imgData);
+        public void ProcessClientDiagnosticLog(string clientName, string message) => ClientDiagnostics.Add((clientName, message));
     }
 
     private sealed class ClientHandlerHarness : IDisposable

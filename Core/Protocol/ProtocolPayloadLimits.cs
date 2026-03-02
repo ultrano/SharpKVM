@@ -5,6 +5,7 @@ namespace SharpKVM
         public const int MaxClipboardTextBytes = 1024 * 1024;
         public const int MaxClipboardFileBytes = 100 * 1024 * 1024;
         public const int MaxClipboardImageBytes = 50 * 1024 * 1024;
+        public const int MaxClientDiagnosticLogBytes = 16 * 1024;
 
         public static bool TryGetMaxPayload(PacketType type, out int maxBytes)
         {
@@ -18,6 +19,9 @@ namespace SharpKVM
                     return true;
                 case PacketType.ClipboardImage:
                     maxBytes = MaxClipboardImageBytes;
+                    return true;
+                case PacketType.ClientDiagnosticLog:
+                    maxBytes = MaxClientDiagnosticLogBytes;
                     return true;
                 default:
                     maxBytes = 0;

@@ -12,6 +12,7 @@ namespace SharpKVM
         Clipboard = 7,
         ClipboardFile = 8,
         ClipboardImage = 9,
-        PlatformInfo = 10
+        PlatformInfo = 10,
+        ClientDiagnosticLog = 11
     }
 }
