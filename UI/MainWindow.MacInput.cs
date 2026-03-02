@@ -218,10 +218,32 @@ namespace SharpKVM
             var hotkeys = _macInputSourceHotkeys;
             if (hotkeys == null)
             {
-                string unavailableMessage = $"[MacInput][Verify] trigger={triggerKey} route=capslock_fallback_symbolic result=skipped_no_hotkeys";
+                bool loaded = MacInputSourceHotkeyProvider.TryLoadWithDiagnostics(out var reloadedHotkeys, out var diagnostics);
+                if (loaded && reloadedHotkeys != null)
+                {
+                    hotkeys = reloadedHotkeys;
+                    _macInputSourceHotkeys = reloadedHotkeys;
+                    _lastMacInputSourceHotkeyRefresh = DateTime.UtcNow;
+                }
+
+                if (hotkeys == null)
+                {
+                    string unavailableMessage =
+                        $"[MacInput][Verify] trigger={triggerKey} route=capslock_fallback_symbolic result=skipped_no_hotkeys status={diagnostics.Status} option_source={diagnostics.CapsLockOptionSource} details={diagnostics.Details}";
+                    Dispatcher.UIThread.Post(() => Log(unavailableMessage));
+                    SendClientDiagnosticLogToServer(unavailableMessage);
+                    await TryFallbackViaDefaultCtrlSpaceAsync(triggerKey, baselineSnapshot, $"no_hotkeys:{diagnostics.Status}").ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            if (hotkeys == null)
+            {
+                // Defensive guard (unreachable by design).
+                string unavailableMessage = $"[MacInput][Verify] trigger={triggerKey} route=capslock_fallback_symbolic result=skipped_no_hotkeys_after_reload";
                 Dispatcher.UIThread.Post(() => Log(unavailableMessage));
                 SendClientDiagnosticLogToServer(unavailableMessage);
-                await TryFallbackViaDefaultCtrlSpaceAsync(triggerKey, baselineSnapshot, "no_hotkeys").ConfigureAwait(false);
+                await TryFallbackViaDefaultCtrlSpaceAsync(triggerKey, baselineSnapshot, "no_hotkeys_after_reload").ConfigureAwait(false);
                 return;
             }
 
@@ -275,17 +297,7 @@ namespace SharpKVM
         private async Task TryFallbackViaDefaultCtrlSpaceAsync(KeyCode triggerKey, MacInputSourceSnapshot baselineSnapshot, string reasonContext)
         {
             const string fallbackRoute = "capslock_fallback_default_ctrl_space";
-            var fallbackHotkey = new MacInputSourceHotkey
-            {
-                Name = "DefaultInputSourceCtrlSpace",
-                SymbolicHotkeyId = 60,
-                MacVirtualKeyCode = 49,
-                MacModifierFlags = 0x00040000,
-                TriggerKey = KeyCode.VcSpace,
-                RequiredModifiers = MacModifierMask.Control
-            };
-
-            if (!MacInputSourceSwitcher.Execute(fallbackHotkey))
+            if (!MacInputSourceSwitcher.ExecuteControlSpaceFallback())
             {
                 string executeFailMessage =
                     $"[MacInput][Verify] trigger={triggerKey} route={fallbackRoute} before={baselineSnapshot.ToLogValue()} after=n/a switched=false reason=execute_failed:{MacInputSourceSwitcher.LastError};context={reasonContext}";

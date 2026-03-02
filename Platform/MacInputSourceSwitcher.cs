@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -80,6 +81,61 @@ public static class MacInputSourceSwitcher
         catch (Exception ex)
         {
             LastError = $"exception:{ex.GetType().Name}:{ex.Message}";
+            return false;
+        }
+    }
+
+    public static bool ExecuteControlSpaceFallback()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            LastError = "not_macos";
+            return false;
+        }
+
+        try
+        {
+            // Prefer System Events key code path for fallback because some macOS builds
+            // ignore synthetic CGEvent modifier combinations for input source switching.
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "osascript",
+                    Arguments = "-e \"tell application \\\"System Events\\\" to key code 49 using control down\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            if (!process.Start())
+            {
+                LastError = "ctrl_space_script_start_failed";
+                return false;
+            }
+
+            if (!process.WaitForExit(1500))
+            {
+                try { process.Kill(true); } catch { }
+                LastError = "ctrl_space_script_timeout";
+                return false;
+            }
+
+            string stderr = process.StandardError.ReadToEnd().Trim();
+            if (process.ExitCode != 0)
+            {
+                LastError = $"ctrl_space_script_failed:{process.ExitCode}:{stderr}";
+                return false;
+            }
+
+            LastError = "ok:ctrl_space_script";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LastError = $"ctrl_space_script_exception:{ex.GetType().Name}:{ex.Message}";
             return false;
         }
     }

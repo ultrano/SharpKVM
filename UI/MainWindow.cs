@@ -191,7 +191,7 @@ namespace SharpKVM
 
         public MainWindow()
         {
-            this.Title = "SharpKVM (v7.8.17)";
+            this.Title = "SharpKVM (v7.8.18)";
             this.Width = 1000;
             this.Height = 750;
             this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
