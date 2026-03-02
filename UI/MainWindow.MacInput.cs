@@ -221,6 +221,7 @@ namespace SharpKVM
                 string unavailableMessage = $"[MacInput][Verify] trigger={triggerKey} route=capslock_fallback_symbolic result=skipped_no_hotkeys";
                 Dispatcher.UIThread.Post(() => Log(unavailableMessage));
                 SendClientDiagnosticLogToServer(unavailableMessage);
+                await TryFallbackViaDefaultCtrlSpaceAsync(triggerKey, baselineSnapshot, "no_hotkeys").ConfigureAwait(false);
                 return;
             }
 
@@ -261,7 +262,44 @@ namespace SharpKVM
                 string noCandidateMessage = $"[MacInput][Verify] trigger={triggerKey} route=capslock_fallback_symbolic result=skipped_no_candidate";
                 Dispatcher.UIThread.Post(() => Log(noCandidateMessage));
                 SendClientDiagnosticLogToServer(noCandidateMessage);
+                await TryFallbackViaDefaultCtrlSpaceAsync(triggerKey, baselineSnapshot, "no_candidate").ConfigureAwait(false);
+                return;
             }
+
+            string noSwitchMessage = $"[MacInput][Verify] trigger={triggerKey} route=capslock_fallback_symbolic result=no_switch";
+            Dispatcher.UIThread.Post(() => Log(noSwitchMessage));
+            SendClientDiagnosticLogToServer(noSwitchMessage);
+            await TryFallbackViaDefaultCtrlSpaceAsync(triggerKey, baselineSnapshot, "symbolic_no_switch").ConfigureAwait(false);
+        }
+
+        private async Task TryFallbackViaDefaultCtrlSpaceAsync(KeyCode triggerKey, MacInputSourceSnapshot baselineSnapshot, string reasonContext)
+        {
+            const string fallbackRoute = "capslock_fallback_default_ctrl_space";
+            var fallbackHotkey = new MacInputSourceHotkey
+            {
+                Name = "DefaultInputSourceCtrlSpace",
+                SymbolicHotkeyId = 60,
+                MacVirtualKeyCode = 49,
+                MacModifierFlags = 0x00040000,
+                TriggerKey = KeyCode.VcSpace,
+                RequiredModifiers = MacModifierMask.Control
+            };
+
+            if (!MacInputSourceSwitcher.Execute(fallbackHotkey))
+            {
+                string executeFailMessage =
+                    $"[MacInput][Verify] trigger={triggerKey} route={fallbackRoute} before={baselineSnapshot.ToLogValue()} after=n/a switched=false reason=execute_failed:{MacInputSourceSwitcher.LastError};context={reasonContext}";
+                Dispatcher.UIThread.Post(() => Log(executeFailMessage));
+                SendClientDiagnosticLogToServer(executeFailMessage);
+                return;
+            }
+
+            var fallbackResult = await CaptureSwitchResultAsync(baselineSnapshot).ConfigureAwait(false);
+            string switchedText = fallbackResult.Switched.HasValue ? (fallbackResult.Switched.Value ? "true" : "false") : "unknown";
+            string fallbackMessage =
+                $"[MacInput][Verify] trigger={triggerKey} route={fallbackRoute} before={baselineSnapshot.ToLogValue()} after={fallbackResult.AfterSnapshot.ToLogValue()} switched={switchedText};context={reasonContext}";
+            Dispatcher.UIThread.Post(() => Log(fallbackMessage));
+            SendClientDiagnosticLogToServer(fallbackMessage);
         }
 
         private void ReportMacInputSourceVerificationFailure(KeyCode triggerKey, string route, string reason, MacInputSourceSnapshot beforeSnapshot)
