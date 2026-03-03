@@ -60,14 +60,13 @@ namespace SharpKVM
 
         private bool TryHandleMacInputSourceHotkey(KeyCode triggerKey)
         {
-            bool capsLockEnabled = IsMacCapsLockInputSourceSwitchEnabled();
             bool isDiagnosticKey = IsMacInputDiagnosticKey(triggerKey);
             if (isDiagnosticKey)
             {
-                Log($"[MacInput][RX] TryHandle trigger={triggerKey} pressed=[{FormatKeySet(_remotePressedKeys)}] consumed=[{FormatKeySet(_consumedInputSourceKeys)}] capsOption={capsLockEnabled} hotkeysLoaded={_macInputSourceHotkeys != null}");
+                Log($"[MacInput][RX] TryHandle trigger={triggerKey} pressed=[{FormatKeySet(_remotePressedKeys)}] consumed=[{FormatKeySet(_consumedInputSourceKeys)}] hotkeysLoaded={_macInputSourceHotkeys != null}");
             }
 
-            if (triggerKey == KeyCode.VcCapsLock && capsLockEnabled)
+            if (triggerKey == KeyCode.VcCapsLock)
             {
                 var modifierMask = MacInputSourceHotkeyMapper.ToModifierMask(_remotePressedKeys, triggerKey);
                 if (modifierMask == MacModifierMask.None)
@@ -95,11 +94,6 @@ namespace SharpKVM
                     Log($"[MacInput][RX] CapsLock direct toggle skipped due to modifiers={modifierMask}");
                 }
             }
-            else if (triggerKey == KeyCode.VcCapsLock && isDiagnosticKey)
-            {
-                Log("[MacInput][RX] CapsLock input source option is disabled; skipping direct toggle.");
-                SendClientDiagnosticLogToServer("[MacInput][Verify] trigger=VcCapsLock route=capslock_direct_toggle result=skipped_caps_option_disabled");
-            }
 
             if (_macInputSourceHotkeys == null)
             {
@@ -117,15 +111,6 @@ namespace SharpKVM
                     Log($"[MacInput][RX] Candidate {DescribeMacHotkey(hotkey)}");
                 }
                 if (!hotkey.Matches(_remotePressedKeys, triggerKey)) continue;
-                if (hotkey.IsCapsLockPlainSwitch && !capsLockEnabled)
-                {
-                    if (isDiagnosticKey)
-                    {
-                        Log($"[MacInput][RX] Candidate matched but blocked by caps option: {DescribeMacHotkey(hotkey)}");
-                    }
-                    SendClientDiagnosticLogToServer($"[MacInput][Verify] trigger={triggerKey} route=symbolic_{hotkey.SymbolicHotkeyId} result=blocked_caps_option_disabled");
-                    continue;
-                }
                 var beforeSnapshot = MacInputSourceStateProbe.Capture();
                 if (!MacInputSourceSwitcher.Execute(hotkey))
                 {
@@ -343,16 +328,6 @@ namespace SharpKVM
                     Log($"[MacInput][RX] consume key={key} reason={reason} releasedForwarded={releasedForwardedKey}");
                 }
             }
-        }
-
-        private bool IsMacCapsLockInputSourceSwitchEnabled()
-        {
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return false;
-            if (_chkMacCapsLockInputSourceSwitch == null)
-            {
-                return _macInputSourceHotkeys?.IsCapsLockInputSourceSwitchEnabled ?? _macCapsLockInputSourceSwitchEnabled;
-            }
-            return _macCapsLockInputSourceSwitchEnabled;
         }
 
         private void LogMacAccessibilityStatusIfNeeded(bool force = false)

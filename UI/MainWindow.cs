@@ -85,8 +85,6 @@ namespace SharpKVM
         private Button _btnStartServer = null!;
         private TextBox _txtServerIP = null!;
         private Button _btnConnect = null!;
-        private CheckBox? _chkMacCapsLockInputSourceSwitch;
-        private volatile bool _macCapsLockInputSourceSwitchEnabled = true;
         private TextBox _txtLog = null!;
         private ComboBox _cmbLayoutMode = null!;
 #if DEBUG
@@ -191,7 +189,7 @@ namespace SharpKVM
 
         public MainWindow()
         {
-            this.Title = "SharpKVM (v7.8.18)";
+            this.Title = "SharpKVM (v7.8.19)";
             this.Width = 1000;
             this.Height = 750;
             this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -292,23 +290,6 @@ namespace SharpKVM
             _btnConnect = new Button { Content = "Connect", Width = 200, HorizontalContentAlignment = HorizontalAlignment.Center };
             _btnConnect.Click += ToggleClientConnection;
             clientPanel.Children.Add(_btnConnect);
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                _chkMacCapsLockInputSourceSwitch = new CheckBox
-                {
-                    Content = "Enable CapsLock Input Source Switch",
-                    IsChecked = true
-                };
-                _macCapsLockInputSourceSwitchEnabled = _chkMacCapsLockInputSourceSwitch.IsChecked == true;
-                _chkMacCapsLockInputSourceSwitch.IsCheckedChanged += (_, _) =>
-                {
-                    bool isEnabled = _chkMacCapsLockInputSourceSwitch.IsChecked == true;
-                    _macCapsLockInputSourceSwitchEnabled = isEnabled;
-                    Log($"Mac CapsLock Input Source Switch: {(isEnabled ? "ON" : "OFF")}");
-                };
-                clientPanel.Children.Add(_chkMacCapsLockInputSourceSwitch);
-            }
 
             clientTab.Content = clientPanel;
 
@@ -2085,28 +2066,6 @@ namespace SharpKVM
                             {
                                 _macInputSourceHotkeys = null;
                             }
-
-                            Dispatcher.UIThread.Post(() =>
-                            {
-                                if (_chkMacCapsLockInputSourceSwitch != null)
-                                {
-                                    bool canTrustDetectedOption =
-                                        diagnostics.Status != MacInputSourceHotkeysLoadStatus.JsonParseFailed &&
-                                        diagnostics.Status != MacInputSourceHotkeysLoadStatus.PlutilFailed &&
-                                        diagnostics.Status != MacInputSourceHotkeysLoadStatus.PlistNotFound;
-
-                                    if (canTrustDetectedOption)
-                                    {
-                                        bool detectedEnabled = diagnostics.IsCapsLockInputSourceSwitchEnabled;
-                                        _chkMacCapsLockInputSourceSwitch.IsChecked = detectedEnabled;
-                                        _macCapsLockInputSourceSwitchEnabled = detectedEnabled;
-                                    }
-                                    else
-                                    {
-                                        Log($"Mac CapsLock option detection unavailable ({diagnostics.Status}); keeping current toggle={_chkMacCapsLockInputSourceSwitch.IsChecked == true}");
-                                    }
-                                }
-                            });
 
                             Dispatcher.UIThread.Post(() => Log(
                                 $"Mac InputSource: status={diagnostics.Status}, capslock_option={diagnostics.IsCapsLockInputSourceSwitchEnabled}, option_source={diagnostics.CapsLockOptionSource}, raw_option_key={diagnostics.RawOptionKey}, raw_option_value={diagnostics.RawOptionValue}, primary=[{diagnostics.PrimarySummary}], secondary=[{diagnostics.SecondarySummary}], details={diagnostics.Details}"));
