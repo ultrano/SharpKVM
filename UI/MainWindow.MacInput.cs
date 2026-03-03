@@ -9,6 +9,11 @@ namespace SharpKVM
 {
     public partial class MainWindow
     {
+        private static readonly bool _traceMacInputSource = string.Equals(
+            Environment.GetEnvironmentVariable("SHARP_KVM_MAC_INPUT_TRACE")?.Trim(),
+            "1",
+            StringComparison.OrdinalIgnoreCase);
+
         private void TriggerMacMissionControl(KeyCode code)
         {
             if (!MacInputMapping.TryMapMissionControlArrowKeyCode(code, out int macCode))
@@ -63,6 +68,7 @@ namespace SharpKVM
             bool isDiagnosticKey = IsMacInputDiagnosticKey(triggerKey);
             bool isCapsLikeTrigger = IsCapsInputSourceToggleKey(triggerKey);
             KeyCode effectiveTriggerKey = GetEffectiveCapsLikeTriggerKey(triggerKey);
+            TraceMacInputSource($"TryHandle start trigger={triggerKey} effective={effectiveTriggerKey} pressed=[{FormatKeySet(_remotePressedKeys)}] capsLike={isCapsLikeTrigger} hotkeysLoaded={_macInputSourceHotkeys != null}");
             if (isDiagnosticKey)
             {
                 Log($"[MacInput][RX] TryHandle trigger={triggerKey} effective={effectiveTriggerKey} pressed=[{FormatKeySet(_remotePressedKeys)}] consumed=[{FormatKeySet(_consumedInputSourceKeys)}] hotkeysLoaded={_macInputSourceHotkeys != null}");
@@ -77,6 +83,7 @@ namespace SharpKVM
                     if (!MacInputSourceSwitcher.ExecuteCapsLockToggle())
                     {
                         Log($"[MacInput][RX] CapsLock toggle execution failed ({triggerKey}): {MacInputSourceSwitcher.LastError}");
+                        TraceMacInputSource($"Direct toggle failed trigger={triggerKey} error={MacInputSourceSwitcher.LastError}");
                         ReportMacInputSourceVerificationFailure(
                             triggerKey,
                             "capslock_direct_toggle",
@@ -89,10 +96,12 @@ namespace SharpKVM
 
                     ConsumeRemotePressedKeysForInputSourceHotkey($"capslock_direct_toggle_{triggerKey}");
                     Log("Input Source Hotkey Triggered (CapsLock)");
+                    TraceMacInputSource($"Direct toggle executed trigger={triggerKey} error={MacInputSourceSwitcher.LastError}");
                     VerifyAndReportMacInputSourceSwitchAsync(triggerKey, "capslock_direct_toggle", beforeSnapshot);
                     return true;
                 }
 
+                TraceMacInputSource($"Direct toggle skipped; trigger={triggerKey} modifierMask={modifierMask}");
                 if (isDiagnosticKey)
                 {
                     Log($"[MacInput][RX] CapsLock direct toggle skipped due to modifiers={modifierMask}");
@@ -105,6 +114,7 @@ namespace SharpKVM
                 {
                     Log("[MacInput][RX] Hotkeys not loaded; skipping symbolic hotkey matching.");
                 }
+                TraceMacInputSource($"Symbolic matching skipped; no hotkeys loaded for trigger={triggerKey}");
                 return false;
             }
 
@@ -133,6 +143,7 @@ namespace SharpKVM
                 return true;
             }
 
+            TraceMacInputSource($"No symbolic hotkey matched for trigger={triggerKey} effective={effectiveTriggerKey}");
             if (isDiagnosticKey)
             {
                 Log($"[MacInput][RX] No input source hotkey matched for trigger={triggerKey}.");
@@ -346,6 +357,16 @@ namespace SharpKVM
             }
         }
 
+        private void TraceMacInputSource(string message)
+        {
+            if (!_traceMacInputSource)
+            {
+                return;
+            }
+
+            Log($"[MacInput][RX][TRACE] {message}");
+        }
+
         private void LogMacAccessibilityStatusIfNeeded(bool force = false)
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
@@ -488,6 +509,7 @@ namespace SharpKVM
 
         private bool HandleMacSpecificKeyboardPacket(KeyCode code, bool isKeyDown, bool isDiagnosticKey)
         {
+            TraceMacInputSource($"Handle start code={code} isKeyDown={isKeyDown} isDiagnostic={isDiagnosticKey} remotePressed(before)=[{FormatKeySet(_remotePressedKeys)}] consumed=[{FormatKeySet(_consumedInputSourceKeys)}] forwarded=[{FormatKeySet(_forwardedRemoteKeys)}]");
             if (isDiagnosticKey)
             {
                 LogMacAccessibilityStatusIfNeeded();
@@ -511,6 +533,7 @@ namespace SharpKVM
 
             if (!isKeyDown && _consumedInputSourceKeys.Remove(code))
             {
+                TraceMacInputSource($"KeyUp consumed by input-source handler: code={code}");
                 if (isDiagnosticKey)
                 {
                     Log($"[MacInput][RX] KeyUp consumed by input-source handler: {code}");
@@ -520,6 +543,7 @@ namespace SharpKVM
 
             if (isKeyDown && TryHandleMacInputSourceHotkey(code))
             {
+                TraceMacInputSource($"KeyDown handled by input-source handler: code={code}");
                 if (isDiagnosticKey)
                 {
                     Log($"[MacInput][RX] KeyDown handled by input-source handler: {code}");
@@ -543,6 +567,7 @@ namespace SharpKVM
                 return true;
             }
 
+            TraceMacInputSource($"No input-source handling: code={code} isKeyDown={isKeyDown}");
             return false;
         }
     }
