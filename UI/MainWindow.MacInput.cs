@@ -61,29 +61,33 @@ namespace SharpKVM
         private bool TryHandleMacInputSourceHotkey(KeyCode triggerKey)
         {
             bool isDiagnosticKey = IsMacInputDiagnosticKey(triggerKey);
+            bool isCapsLikeTrigger = IsCapsInputSourceToggleKey(triggerKey);
+            KeyCode effectiveTriggerKey = GetEffectiveCapsLikeTriggerKey(triggerKey);
             if (isDiagnosticKey)
             {
-                Log($"[MacInput][RX] TryHandle trigger={triggerKey} pressed=[{FormatKeySet(_remotePressedKeys)}] consumed=[{FormatKeySet(_consumedInputSourceKeys)}] hotkeysLoaded={_macInputSourceHotkeys != null}");
+                Log($"[MacInput][RX] TryHandle trigger={triggerKey} effective={effectiveTriggerKey} pressed=[{FormatKeySet(_remotePressedKeys)}] consumed=[{FormatKeySet(_consumedInputSourceKeys)}] hotkeysLoaded={_macInputSourceHotkeys != null}");
             }
 
-            if (triggerKey == KeyCode.VcCapsLock)
+            if (isCapsLikeTrigger)
             {
-                var modifierMask = MacInputSourceHotkeyMapper.ToModifierMask(_remotePressedKeys, triggerKey);
+                var modifierMask = MacInputSourceHotkeyMapper.ToModifierMask(_remotePressedKeys, effectiveTriggerKey);
                 if (modifierMask == MacModifierMask.None)
                 {
                     var beforeSnapshot = MacInputSourceStateProbe.Capture();
                     if (!MacInputSourceSwitcher.ExecuteCapsLockToggle())
                     {
-                        Log($"[MacInput][RX] CapsLock toggle execution failed: {MacInputSourceSwitcher.LastError}");
+                        Log($"[MacInput][RX] CapsLock toggle execution failed ({triggerKey}): {MacInputSourceSwitcher.LastError}");
                         ReportMacInputSourceVerificationFailure(
                             triggerKey,
                             "capslock_direct_toggle",
                             $"toggle_failed:{MacInputSourceSwitcher.LastError}",
                             beforeSnapshot);
-                        return false;
+                        ConsumeRemotePressedKeysForInputSourceHotkey("capslock_direct_toggle_failed");
+                        VerifyAndReportMacInputSourceSwitchAsync(triggerKey, "capslock_direct_toggle", beforeSnapshot);
+                        return true;
                     }
 
-                    ConsumeRemotePressedKeysForInputSourceHotkey("capslock_direct_toggle");
+                    ConsumeRemotePressedKeysForInputSourceHotkey($"capslock_direct_toggle_{triggerKey}");
                     Log("Input Source Hotkey Triggered (CapsLock)");
                     VerifyAndReportMacInputSourceSwitchAsync(triggerKey, "capslock_direct_toggle", beforeSnapshot);
                     return true;
@@ -106,11 +110,11 @@ namespace SharpKVM
 
             foreach (var hotkey in _macInputSourceHotkeys.Enumerate())
             {
-                if (isDiagnosticKey && hotkey.TriggerKey == triggerKey)
+                if (isDiagnosticKey && hotkey.TriggerKey == effectiveTriggerKey)
                 {
                     Log($"[MacInput][RX] Candidate {DescribeMacHotkey(hotkey)}");
                 }
-                if (!hotkey.Matches(_remotePressedKeys, triggerKey)) continue;
+                if (!hotkey.Matches(_remotePressedKeys, effectiveTriggerKey)) continue;
                 var beforeSnapshot = MacInputSourceStateProbe.Capture();
                 if (!MacInputSourceSwitcher.Execute(hotkey))
                 {
@@ -157,7 +161,7 @@ namespace SharpKVM
                     Dispatcher.UIThread.Post(() => Log(message));
                     SendClientDiagnosticLogToServer(message);
 
-                    if (triggerKey == KeyCode.VcCapsLock &&
+                    if (IsCapsInputSourceToggleKey(triggerKey) &&
                         string.Equals(route, "capslock_direct_toggle", StringComparison.Ordinal) &&
                         verifyResult.Switched != true)
                     {
@@ -310,6 +314,18 @@ namespace SharpKVM
         private static string DescribeMacHotkey(MacInputSourceHotkey hotkey)
         {
             return $"id={hotkey.SymbolicHotkeyId},name={hotkey.Name},trigger={hotkey.TriggerKey},required={hotkey.RequiredModifiers},vkey={hotkey.MacVirtualKeyCode},flags=0x{hotkey.MacModifierFlags:X}";
+        }
+
+        internal static bool IsCapsInputSourceToggleKey(KeyCode code)
+        {
+            return code == KeyCode.VcCapsLock || code == KeyCode.VcHangul;
+        }
+
+        internal static KeyCode GetEffectiveCapsLikeTriggerKey(KeyCode code)
+        {
+            return code == KeyCode.VcHangul
+                ? KeyCode.VcCapsLock
+                : code;
         }
 
         private void ConsumeRemotePressedKeysForInputSourceHotkey(string reason)

@@ -29,7 +29,7 @@
 - 수집 대상 로그 키워드:
   - 성공: `Input Source Hotkey Triggered (CapsLock)`
   - 실패: `CapsLock toggle execution failed`
-  - 매칭 실패: `No input source hotkey matched for trigger=VcCapsLock`
+  - 매칭 실패: `No input source hotkey matched for trigger=VcCapsLock` 또는 `trigger=VcHangul`
 - 지표 공식:
   - `capslock_success_rate = success_count / (success_count + failure_count + mismatch_count) * 100`
 - 알림 임계치:
@@ -51,14 +51,13 @@
 - 제목: `macOS CapsLock(한/A) 입력소스 전환 안정성 개선 안내`
 - 본문:
   - macOS 전환 직후 CapsLock 한/영 전환이 간헐적으로 동작하지 않던 문제를 수정 중입니다.
-  - 배포 후 문제가 지속되면 `Client > Enable CapsLock Input Source Switch` 설정과 macOS 입력소스 옵션을 확인해 주세요.
+  - 배포 후 문제가 지속되면 macOS 입력소스 설정(특히 `CapsLock으로 입력 소스 전환`)을 확인해 주세요.
   - 문제 재발 시 앱 로그(`[MacInput]`)와 macOS 버전 정보를 함께 전달해 주세요.
 
 ### 6.2 사용자 점검 가이드
 1. macOS 시스템 설정에서 `CapsLock으로 입력 소스 전환` 옵션이 켜져 있는지 확인
-2. SharpKVM Client 탭에서 `Enable CapsLock Input Source Switch`가 켜져 있는지 확인
-3. 접근성 권한이 허용되어 있는지 확인
-4. 이상 시 로그에 `Input Source Hotkey Triggered (CapsLock)` 존재 여부 확인
+2. 접근성 권한이 허용되어 있는지 확인
+3. 이상 시 로그에 `Input Source Hotkey Triggered (CapsLock)` 또는 `Input Source Hotkey Triggered (capslock_direct_toggle_...)` 존재 여부 확인
 
 ## 7. 현재 운영 판정
 - 상태: `조건부 승인 유지`
