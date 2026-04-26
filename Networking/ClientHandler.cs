@@ -11,8 +11,13 @@ namespace SharpKVM
 {
     public class ClientHandler : IDisposable
     {
+        internal const int MaxSendQueueItems = 64;
+        internal const int MaxQueuedSendBytes = 128 * 1024 * 1024;
+
         public TcpClient Socket;
         public string Name;
+        public string RemoteAddress { get; }
+        public int RemotePort { get; }
         private readonly NetworkStream _stream;
         public int Width { get; private set; } = 1920;
         public int Height { get; private set; } = 1080;
@@ -22,8 +27,10 @@ namespace SharpKVM
         public double Sensitivity { get; set; } = 3.0;
         public double WheelSensitivity { get; set; } = 1.0;
 
-        private readonly BlockingCollection<byte[]> _sendQueue = new BlockingCollection<byte[]>();
+        private readonly BlockingCollection<QueuedSend> _sendQueue = new BlockingCollection<QueuedSend>(MaxSendQueueItems);
+        private readonly object _sendQueueLock = new object();
         private readonly IClientHandlerMessageSink _messageSink;
+        private long _queuedSendBytes;
         private int _isClosed;
 
         // SECURITY NOTE: Network stream is used without TLS. All packets (keystrokes, mouse,
@@ -33,7 +40,10 @@ namespace SharpKVM
             Socket = s ?? throw new ArgumentNullException(nameof(s));
             _stream = s.GetStream();
             _messageSink = messageSink ?? throw new ArgumentNullException(nameof(messageSink));
-            Name = "Client-" + ((IPEndPoint)s.Client.RemoteEndPoint!).Address;
+            var remoteEndPoint = (IPEndPoint)s.Client.RemoteEndPoint!;
+            RemoteAddress = remoteEndPoint.Address.ToString();
+            RemotePort = remoteEndPoint.Port;
+            Name = $"Client-{RemoteAddress}:{RemotePort}";
             Task.Run(SendingLoop)
                 .ContinueWith(t => Debug.WriteLine($"[SharpKVM] SendingLoop task failed for {Name}: {t.Exception?.GetBaseException().Message}"), TaskContinuationOptions.OnlyOnFaulted);
         }
@@ -42,11 +52,18 @@ namespace SharpKVM
         {
             try
             {
-                foreach (var data in _sendQueue.GetConsumingEnumerable())
+                foreach (var item in _sendQueue.GetConsumingEnumerable())
                 {
-                    if (Volatile.Read(ref _isClosed) == 1) break;
-                    if (!_stream.CanWrite) break;
-                    _stream.Write(data, 0, data.Length);
+                    try
+                    {
+                        if (Volatile.Read(ref _isClosed) == 1) break;
+                        if (!_stream.CanWrite) break;
+                        item.WriteTo(_stream);
+                    }
+                    finally
+                    {
+                        ReleaseQueuedBytes(item.ByteLength);
+                    }
                 }
             }
             catch (Exception ex)
@@ -168,45 +185,71 @@ namespace SharpKVM
             byte[] bytes = Encoding.UTF8.GetBytes(text);
             if (!ProtocolPayloadLimits.IsValidPayloadLength(PacketType.Clipboard, bytes.Length)) return;
 
-            SendPacketAsync(new InputPacket { Type = PacketType.Clipboard, X = bytes.Length });
-            TryEnqueue(bytes);
+            TryEnqueuePacket(new InputPacket { Type = PacketType.Clipboard, X = bytes.Length }, bytes);
         }
 
         public void SendFilePacket(byte[] data)
         {
             if (!ProtocolPayloadLimits.IsValidPayloadLength(PacketType.ClipboardFile, data.Length)) return;
 
-            SendPacketAsync(new InputPacket { Type = PacketType.ClipboardFile, X = data.Length });
-            TryEnqueue(data);
+            TryEnqueuePacket(new InputPacket { Type = PacketType.ClipboardFile, X = data.Length }, data);
         }
 
         public void SendImagePacket(byte[] data)
         {
             if (!ProtocolPayloadLimits.IsValidPayloadLength(PacketType.ClipboardImage, data.Length)) return;
 
-            SendPacketAsync(new InputPacket { Type = PacketType.ClipboardImage, X = data.Length });
-            TryEnqueue(data);
+            TryEnqueuePacket(new InputPacket { Type = PacketType.ClipboardImage, X = data.Length }, data);
         }
 
-        private bool TryEnqueue(byte[] data)
+        private bool TryEnqueuePacket(InputPacket packet, byte[]? payload = null)
         {
             if (Volatile.Read(ref _isClosed) == 1) return false;
 
+            var item = new QueuedSend(packet, payload);
+            var reservedBytes = false;
+
+            lock (_sendQueueLock)
+            {
+                if (Volatile.Read(ref _isClosed) == 1) return false;
+                if (_sendQueue.IsAddingCompleted) return false;
+
+                if (_queuedSendBytes + item.ByteLength > MaxQueuedSendBytes)
+                {
+                    Debug.WriteLine($"[SharpKVM] Send queue byte limit reached for {Name}; closing client.");
+                    Close();
+                    return false;
+                }
+
+                _queuedSendBytes += item.ByteLength;
+                reservedBytes = true;
+            }
+
             try
             {
-                _sendQueue.Add(data);
-                return true;
+                if (_sendQueue.TryAdd(item))
+                {
+                    return true;
+                }
+
+                Debug.WriteLine($"[SharpKVM] Send queue item limit reached for {Name}; closing client.");
+                Close();
             }
             catch (InvalidOperationException)
             {
-                return false;
             }
+
+            if (reservedBytes)
+            {
+                ReleaseQueuedBytes(item.ByteLength);
+            }
+
+            return false;
         }
 
         public void SendPacketAsync(InputPacket p)
         {
-            byte[] arr = InputPacketSerializer.Serialize(p);
-            TryEnqueue(arr);
+            TryEnqueuePacket(p);
         }
 
         public void Close()
@@ -221,6 +264,39 @@ namespace SharpKVM
         {
             Close();
             try { _sendQueue.Dispose(); } catch (ObjectDisposedException) { }
+        }
+
+        private void ReleaseQueuedBytes(long byteLength)
+        {
+            lock (_sendQueueLock)
+            {
+                _queuedSendBytes -= byteLength;
+                if (_queuedSendBytes < 0) _queuedSendBytes = 0;
+            }
+        }
+
+        private readonly struct QueuedSend
+        {
+            private readonly byte[] _header;
+            private readonly byte[]? _payload;
+
+            public QueuedSend(InputPacket packet, byte[]? payload = null)
+            {
+                _header = InputPacketSerializer.Serialize(packet);
+                _payload = payload;
+                ByteLength = _header.LongLength + (_payload?.LongLength ?? 0);
+            }
+
+            public long ByteLength { get; }
+
+            public void WriteTo(NetworkStream stream)
+            {
+                stream.Write(_header, 0, _header.Length);
+                if (_payload is { Length: > 0 })
+                {
+                    stream.Write(_payload, 0, _payload.Length);
+                }
+            }
         }
     }
 

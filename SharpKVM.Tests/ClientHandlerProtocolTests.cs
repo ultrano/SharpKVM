@@ -34,6 +34,36 @@ public class ClientHandlerProtocolTests
     }
 
     [Fact]
+    public async Task ClientHandler_RuntimeNameIncludesPort_ForSameIpConnections()
+    {
+        using var first = await ClientHandlerHarness.CreateAsync();
+        using var second = await ClientHandlerHarness.CreateAsync();
+
+        Assert.Equal(IPAddress.Loopback.ToString(), first.Handler.RemoteAddress);
+        Assert.Equal(IPAddress.Loopback.ToString(), second.Handler.RemoteAddress);
+        Assert.NotEqual(first.Handler.RemotePort, second.Handler.RemotePort);
+        Assert.Equal($"Client-{first.Handler.RemoteAddress}:{first.Handler.RemotePort}", first.Handler.Name);
+        Assert.Equal($"Client-{second.Handler.RemoteAddress}:{second.Handler.RemotePort}", second.Handler.Name);
+        Assert.NotEqual(first.Handler.Name, second.Handler.Name);
+    }
+
+    [Fact]
+    public async Task ClientHandler_SendQueue_IsBounded()
+    {
+        using var harness = await ClientHandlerHarness.CreateAsync();
+
+        var field = typeof(ClientHandler).GetField("_sendQueue", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+
+        var queue = field.GetValue(harness.Handler);
+        Assert.NotNull(queue);
+
+        var boundedCapacity = (int?)queue.GetType().GetProperty("BoundedCapacity")?.GetValue(queue);
+        Assert.Equal(ClientHandler.MaxSendQueueItems, boundedCapacity);
+        Assert.True(ClientHandler.MaxQueuedSendBytes >= ProtocolPayloadLimits.MaxClipboardFileBytes + Marshal.SizeOf<InputPacket>());
+    }
+
+    [Fact]
     public async Task HandshakeAsync_HelloPacketWithPositiveResolution_SetsWidthAndHeight()
     {
         using var harness = await ClientHandlerHarness.CreateAsync();
@@ -267,7 +297,8 @@ public class ClientHandlerProtocolTests
             payload);
 
         await WaitUntilAsync(() => harness.Sink.ClientDiagnostics.Count == 1, DefaultTimeout);
-        Assert.Equal(("Client-127.0.0.1", message), harness.Sink.ClientDiagnostics[0]);
+        Assert.StartsWith("Client-127.0.0.1:", harness.Sink.ClientDiagnostics[0].ClientName);
+        Assert.Equal(message, harness.Sink.ClientDiagnostics[0].Message);
         Assert.Empty(harness.Sink.ClipboardTexts);
         Assert.Empty(harness.Sink.FilePayloads);
         Assert.Empty(harness.Sink.ImagePayloads);

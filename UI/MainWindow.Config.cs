@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 
 namespace SharpKVM
@@ -42,31 +43,9 @@ namespace SharpKVM
                     bool loadedMode = false;
                     foreach (var line in lines)
                     {
-                        var parts = line.Split('|');
-                        if (parts.Length >= 11)
+                        var config = ParseClientConfigLine(line);
+                        if (config != null)
                         {
-                            var config = new ClientConfig
-                            {
-                                IP = parts[0],
-                                Sensitivity = double.Parse(parts[1]),
-                                WheelSensitivity = double.Parse(parts[2]),
-                                LayoutMode = string.Equals(parts[3], "Free", StringComparison.OrdinalIgnoreCase) ? LayoutMode.Free : LayoutMode.Snap,
-                                X = double.Parse(parts[4]),
-                                Y = double.Parse(parts[5]),
-                                Width = double.Parse(parts[6]),
-                                Height = double.Parse(parts[7]),
-                                IsPlaced = bool.Parse(parts[8]),
-                                IsSnapped = bool.Parse(parts[9]),
-                                SnapAnchorID = parts[10]
-                            };
-                            if (parts.Length >= 15)
-                            {
-                                config.DesktopX = double.Parse(parts[11]);
-                                config.DesktopY = double.Parse(parts[12]);
-                                config.DesktopWidth = double.Parse(parts[13]);
-                                config.DesktopHeight = double.Parse(parts[14]);
-                            }
-
                             _clientConfigs[config.IP] = config;
                             if (!loadedMode)
                             {
@@ -128,11 +107,74 @@ namespace SharpKVM
 
                 foreach (var cfg in _clientConfigs.Values)
                 {
-                    lines.Add($"{cfg.IP}|{cfg.Sensitivity}|{cfg.WheelSensitivity}|{cfg.LayoutMode}|{cfg.X}|{cfg.Y}|{cfg.Width}|{cfg.Height}|{cfg.IsPlaced}|{cfg.IsSnapped}|{cfg.SnapAnchorID}|{cfg.DesktopX}|{cfg.DesktopY}|{cfg.DesktopWidth}|{cfg.DesktopHeight}");
+                    lines.Add(FormatClientConfigLine(cfg));
                 }
                 File.WriteAllLines(path, lines);
             }
             catch (Exception ex) { Log($"SaveClientConfigs failed: {ex.Message}"); }
+        }
+
+        private static ClientConfig? ParseClientConfigLine(string line)
+        {
+            var parts = line.Split('|');
+            if (parts.Length < 11)
+            {
+                return null;
+            }
+
+            var config = new ClientConfig
+            {
+                IP = parts[0],
+                Sensitivity = ParseConfigDouble(parts[1]),
+                WheelSensitivity = ParseConfigDouble(parts[2]),
+                LayoutMode = string.Equals(parts[3], "Free", StringComparison.OrdinalIgnoreCase) ? LayoutMode.Free : LayoutMode.Snap,
+                X = ParseConfigDouble(parts[4]),
+                Y = ParseConfigDouble(parts[5]),
+                Width = ParseConfigDouble(parts[6]),
+                Height = ParseConfigDouble(parts[7]),
+                IsPlaced = bool.Parse(parts[8]),
+                IsSnapped = bool.Parse(parts[9]),
+                SnapAnchorID = parts[10]
+            };
+            if (parts.Length >= 15)
+            {
+                config.DesktopX = ParseConfigDouble(parts[11]);
+                config.DesktopY = ParseConfigDouble(parts[12]);
+                config.DesktopWidth = ParseConfigDouble(parts[13]);
+                config.DesktopHeight = ParseConfigDouble(parts[14]);
+            }
+
+            return config;
+        }
+
+        private static string FormatClientConfigLine(ClientConfig cfg)
+        {
+            return string.Join("|",
+                cfg.IP,
+                FormatConfigDouble(cfg.Sensitivity),
+                FormatConfigDouble(cfg.WheelSensitivity),
+                cfg.LayoutMode,
+                FormatConfigDouble(cfg.X),
+                FormatConfigDouble(cfg.Y),
+                FormatConfigDouble(cfg.Width),
+                FormatConfigDouble(cfg.Height),
+                cfg.IsPlaced,
+                cfg.IsSnapped,
+                cfg.SnapAnchorID,
+                FormatConfigDouble(cfg.DesktopX),
+                FormatConfigDouble(cfg.DesktopY),
+                FormatConfigDouble(cfg.DesktopWidth),
+                FormatConfigDouble(cfg.DesktopHeight));
+        }
+
+        private static double ParseConfigDouble(string value)
+        {
+            return double.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);
+        }
+
+        private static string FormatConfigDouble(double value)
+        {
+            return value.ToString("R", CultureInfo.InvariantCulture);
         }
     }
 }

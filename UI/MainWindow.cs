@@ -511,8 +511,6 @@ namespace SharpKVM
             Dispatcher.UIThread.Post(async () => {
                 try {
                     string saveDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
-                    if (Directory.Exists(saveDir)) Directory.Delete(saveDir, true);
-                    Directory.CreateDirectory(saveDir);
                     var files = ExtractClipboardZipSafely(zipData, saveDir);
                     
                     string newHash = string.Join("|", files);
@@ -538,6 +536,35 @@ namespace SharpKVM
         }
 
         private static List<string> ExtractClipboardZipSafely(byte[] zipData, string saveDir)
+        {
+            string targetDir = Path.GetFullPath(saveDir);
+            string? parentDir = Path.GetDirectoryName(targetDir);
+            if (string.IsNullOrEmpty(parentDir))
+            {
+                throw new InvalidDataException("Invalid clipboard file destination.");
+            }
+
+            Directory.CreateDirectory(parentDir);
+            string stagingDir = Path.Combine(parentDir, $".{Path.GetFileName(targetDir)}.{Guid.NewGuid():N}.tmp");
+
+            try
+            {
+                Directory.CreateDirectory(stagingDir);
+                var stagedFiles = ExtractClipboardZipEntriesSafely(zipData, stagingDir);
+                var finalFiles = stagedFiles
+                    .Select(file => Path.GetFullPath(Path.Combine(targetDir, Path.GetRelativePath(stagingDir, file))))
+                    .ToList();
+
+                ReplaceDirectoryWithStaging(targetDir, stagingDir);
+                return finalFiles;
+            }
+            finally
+            {
+                TryDeleteDirectory(stagingDir);
+            }
+        }
+
+        private static List<string> ExtractClipboardZipEntriesSafely(byte[] zipData, string saveDir)
         {
             long maxExtractedBytes = MAX_ZIP_EXTRACTED_BYTES;
             long totalExtractedBytes = 0;
@@ -594,6 +621,54 @@ namespace SharpKVM
             }
 
             return extractedFiles;
+        }
+
+        private static void ReplaceDirectoryWithStaging(string targetDir, string stagingDir)
+        {
+            string backupDir = Path.Combine(
+                Path.GetDirectoryName(targetDir) ?? AppDomain.CurrentDomain.BaseDirectory,
+                $".{Path.GetFileName(targetDir)}.{Guid.NewGuid():N}.bak");
+            bool movedExisting = false;
+
+            if (Directory.Exists(targetDir))
+            {
+                Directory.Move(targetDir, backupDir);
+                movedExisting = true;
+            }
+
+            try
+            {
+                Directory.Move(stagingDir, targetDir);
+            }
+            catch
+            {
+                if (movedExisting && !Directory.Exists(targetDir) && Directory.Exists(backupDir))
+                {
+                    Directory.Move(backupDir, targetDir);
+                }
+
+                throw;
+            }
+
+            if (movedExisting)
+            {
+                TryDeleteDirectory(backupDir);
+            }
+        }
+
+        private static void TryDeleteDirectory(string path)
+        {
+            try
+            {
+                if (Directory.Exists(path))
+                {
+                    Directory.Delete(path, true);
+                }
+            }
+            catch
+            {
+                // Best effort cleanup only; preserving the active ReceivedFiles directory is more important.
+            }
         }
 
         private void UpdateScreenCache() {
